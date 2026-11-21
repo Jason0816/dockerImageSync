@@ -54,18 +54,16 @@ jobs:
           if [ -z "$TAGS" ] || [ "$TAGS" = "all" ]; then
             # Sync all tags: source (without tag) -> destination (without tag)
             echo "Mode: all tags"
-            cat > images.yaml <<EOF
-${SOURCE_BASE}: ${DEST_BASE}
-EOF
+            printf '%s: %s\n' "$SOURCE_BASE" "$DEST_BASE" > images.yaml
           else
             # Sync specific tags
             echo "Mode: specific tags"
-            > images.yaml
+            : > images.yaml
             IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
             for tag in "${TAG_ARRAY[@]}"; do
               tag=$(echo "$tag" | xargs)  # trim whitespace
               [ -z "$tag" ] && continue
-              echo "${SOURCE_BASE}:${tag}: ${DEST_BASE}:${tag}" >> images.yaml
+              printf '%s:%s: %s:%s\n' "$SOURCE_BASE" "$tag" "$DEST_BASE" "$tag" >> images.yaml
             done
           fi
 
