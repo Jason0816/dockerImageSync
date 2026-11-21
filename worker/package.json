@@ -1,0 +1,5 @@
+{
+  "name": "image-sync-worker",
+  "private": true,
+  "type": "module"
+}

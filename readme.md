@@ -98,36 +98,42 @@ quay.io:
 ### 5.3 Serverless 代理：`worker/index.js`
 
 **接口**：`POST /api/sync`
-**请求体**：`{ "source": string, "destination": string, "tags": string }`
-**响应**：`200 { "ok": true, "run_id": number, "html_url": string }` / `400 { "error": string }` / `502 { "ok": false, "error": string }`
+**请求体**：`{ "source": string, "org"?: string }`
+（兼容旧参数 `{ "destination": string, "tags": string }`，显式传 `destination` 时不再推导）
+**响应**：`200 { "ok": true, "run_id": number, "html_url": string, "destination": string }` / `400 { "error": string }` / `502 { "ok": false, "error": string }`
+
+**配置查询**：`GET /api/config`
+**响应**：`200 { "ok": true, "registry": string, "default_org": string }`（前端用于展示目标路径预览）
 
 **进度查询**：`GET /api/status?id=<run_id>`
 **响应**：`200 { "ok": true, "status": "queued|in_progress|completed", "conclusion": string, "html_url": string, "steps": [{ "name": string, "status": string, "conclusion": string }] }` / `400 / 404 / 502`
 
 **逻辑**：
-1. 仅接受 POST；其余返回 405。
-2. 校验 `source`、`destination` 非空，否则 400。可选校验 `destination` 包含 `swr.` 域名后缀，提前拦截误填。
-3. 从环境变量读取 `GITHUB_REPO`（`owner/repo`）、`WORKFLOW_ID`（文件名如 `sync-images.yml`）、`GITHUB_TOKEN`。
-4. 向 `https://api.github.com/repos/{repo}/actions/workflows/{workflowId}/dispatches` 发起 POST，body 为：
+1. `/api/sync` 仅接受 POST，`/api/status`、`/api/config` 仅接受 GET；其余返回 405。
+2. 校验 `source` 非空且可解析，否则 400。
+3. **自动推导目标地址**（前端只需填源地址）：`{SWR_REGISTRY}/{org}/{源最后一段仓库名}:{tag}`，其中 `tag` 取源地址中的 tag，缺省为 `latest`；`org` 取请求参数 `org`，缺省为 `SWR_ORG`（`ascend-sync`）。组织名非法返回 400。
+4. 从环境变量读取 `GITHUB_REPO`（`owner/repo`）、`WORKFLOW_ID`（文件名如 `sync-images.yml`）、`GITHUB_TOKEN`。
+5. 向 `https://api.github.com/repos/{repo}/actions/workflows/{workflowId}/dispatches` 发起 POST，body 为：
    ```json
-   { "ref": "main", "inputs": { "source": "...", "destination": "...", "tags": "..." } }
+   { "ref": "main", "inputs": { "source": "...", "destination": "<推导结果>", "tags": "" } }
    ```
    Header 必须含 `Authorization: Bearer <token>`、`Accept: application/vnd.github+json`、`X-GitHub-Api-Version: 2022-11-28`。
-5. 根据 GitHub 返回状态码映射响应，并设置 CORS 头 `Access-Control-Allow-Origin`（生产环境应限定为前端域名，可用 `ALLOWED_ORIGIN` 环境变量配置）。
-6. dispatch 成功后轮询最近运行列表，定位本次触发的 `run_id` 与 `html_url` 返回给前端；`/api/status` 按 `run_id` 查询运行状态与步骤，供前端展示实时进度。
+6. 根据 GitHub 返回状态码映射响应，并设置 CORS 头 `Access-Control-Allow-Origin`（生产环境应限定为前端域名，可用 `ALLOWED_ORIGIN` 环境变量配置）。
+7. dispatch 成功后轮询最近运行列表，定位本次触发的 `run_id` 与 `html_url` 返回给前端；`/api/status` 按 `run_id` 查询运行状态与步骤，供前端展示实时进度。
 
-**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`，可选 `ALLOWED_ORIGIN`。
+**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`；可选 `SWR_REGISTRY`（默认 `swr.cn-east-4.myhuaweicloud.com`）、`SWR_ORG`（默认 `ascend-sync`）、`ALLOWED_ORIGIN`。
 
 ### 5.4 前端：`web/index.html` + `web/app.js`
 
-**页面元素**：源镜像输入框、目标镜像输入框（占位提示 `swr.cn-north-4.myhuaweicloud.com/your-org/...`）、tag 输入框（可选）、提交按钮、结果提示区。
+**页面元素**：源镜像输入框、目标组织输入框（默认 `ascend-sync`）、目标路径实时预览、提交按钮、进度面板、结果提示区。
 
 **行为**：
-1. 提交时阻止默认表单行为，校验两个必填输入框非空。
-2. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({...}) })`。
-3. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
-4. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
-5. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
+1. 提交时阻止默认表单行为，校验源镜像地址非空且可解析。
+2. 前端按与 Worker 相同的规则在本地预览目标路径（`GET /api/config` 获取 registry 与默认组织），用户无需填写目标地址。
+3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org }) })`。
+4. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
+5. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
+6. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
 
 **约束**：前端代码中**不得出现任何 GitHub Token 或 SWR 凭证**。
 
@@ -141,7 +147,9 @@ quay.io:
 | GitHub Secrets | `SOURCE_QUAY_USER` / `_PASS` | 可选，私有 Quay 镜像 |
 | Worker 环境变量 | `GITHUB_REPO` | `owner/repo` |
 | Worker 环境变量 | `WORKFLOW_ID` | `sync-images.yml` |
-| Worker 环境变量 | `GITHUB_TOKEN` | Fine-grained Token，仅该仓库 Actions: Read & Write |
+| Worker 环境变量 | `GITHUB_TOKEN` | Fine-grained Token，需 Contents / Actions / Workflows 读写 |
+| Worker 环境变量 | `SWR_REGISTRY` | 可选，目标 SWR 域名，默认 `swr.cn-east-4.myhuaweicloud.com` |
+| Worker 环境变量 | `SWR_ORG` | 可选，默认目标组织，默认 `ascend-sync` |
 | 前端配置 | `PROXY_URL` | Worker 部署地址 |
 
 ## 7. 实施步骤
@@ -157,13 +165,13 @@ quay.io:
 
 ## 8. 验收标准
 
-- [ ] 在 GitHub Actions 页面手动触发 workflow，输入 `source=docker.io/library/nginx:1.25.3`、`destination=swr.cn-north-4.myhuaweicloud.com/<org>/nginx:1.25.3`，SWR 控制台出现对应镜像与 tag。
-- [ ] 从前端页面提交同样参数，Actions 页面出现一次新的 workflow run，且最终同步成功。
+- [ ] 从前端页面只填 `source=docker.io/library/nginx:1.25.3`，自动同步到 `swr.cn-east-4.myhuaweicloud.com/ascend-sync/nginx:1.25.3`，Actions 出现新 run 并最终成功。
+- [ ] 前端修改目标组织（如 `my-org`）后，目标路径变为 `swr.../my-org/nginx:1.25.3`。
 - [ ] 传入不存在的源镜像时，workflow 失败并在日志中给出明确错误，前端收到“已触发”响应（触发成功与同步成败解耦）。
 - [ ] 前端源码与 Worker 源码中不包含任何 SWR AK/SK 或 GitHub Token 明文。
 - [ ] `tags` 留空且源地址带 tag 时，workflow 只同步该 tag；源地址不带 tag 时，生成全 tag 同步规则（源地址不含 tag）。
 - [ ] 重复触发同一镜像，`image-syncer` 日志显示 skipped 而非重复传输（增量同步生效）。
-- [ ] 前端输入非 `swr.` 域名的目标地址时，代理返回 400 并提示“目标仓库仅支持华为云 SWR”。
+- [ ] 直连 API 传入非 `swr.` 的 `destination` 时，代理返回 400 并提示“目标仓库仅支持华为云 SWR”。
 - [ ] 前端触发后可实时看到运行状态与步骤进度，完成后展示“同步成功/失败”结果。
 
 ## 9. 注意事项（实现时必须遵守）
@@ -171,7 +179,7 @@ quay.io:
 1. `auth.yaml` 中 SWR 的 Registry key 必须与镜像 URL hostname 逐字一致，否则认证失败。
 2. 华为云 SWR 的目标组织（Organization）需提前在控制台创建，否则推送报错。
 3. SWR 凭证使用**长期有效登录指令**（基于 AK/SK 生成），不要使用 24 小时临时登录指令，否则定时同步会在凭证过期后失败。
-4. GitHub Token 仅授予目标仓库的 Actions 读写权限，禁止使用 classic token 或全权限 token。
+4. GitHub Token 使用 Fine-grained Token，仅授予目标仓库的 Contents / Actions / Workflows 读写权限，禁止使用 classic token 或全权限 token。
 5. Worker 的 CORS 在生产环境应限定为前端实际域名，避免任意站点调用。
 6. 若使用 Vercel 替代 Cloudflare Worker，接口契约与请求体保持不变，仅部署方式和环境变量配置入口不同。
 7. 代理层对 `destination` 做 `swr.` 域名前缀校验，是低成本防止误推送至其他仓库的有效手段，建议保留。

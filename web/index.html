@@ -70,6 +70,21 @@
 
     .hint { font-size: 0.72rem; color: #64748b; margin-top: 0.3rem; }
 
+    .preview {
+      margin: 0.35rem 0 1.1rem;
+      padding: 0.7rem 0.85rem;
+      border-radius: 8px;
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px dashed rgba(56, 189, 248, 0.35);
+      font-size: 0.8rem;
+      color: #7dd3fc;
+      word-break: break-all;
+      min-height: 2.4rem;
+      line-height: 1.5;
+    }
+
+    .preview .k { color: #64748b; }
+
     button {
       width: 100%;
       padding: 0.75rem;
@@ -164,46 +179,29 @@
     }
 
     .run-link:hover { color: #bae6fd; }
-
-    .spinner {
-      display: inline-block;
-      width: 0.8rem;
-      height: 0.8rem;
-      border: 2px solid rgba(125, 211, 252, 0.3);
-      border-top-color: #7dd3fc;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      vertical-align: -1px;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>🐳 容器镜像同步</h1>
-    <p class="subtitle">将 Docker Hub / quay.io 镜像同步至华为云 SWR，同步进度实时展示</p>
+    <p class="subtitle">填入 Docker Hub / quay.io 镜像地址，自动同步到华为云 SWR</p>
 
     <form id="syncForm" autocomplete="off">
       <div class="form-group">
         <label for="source">源镜像地址 *</label>
         <input type="text" id="source" name="source"
                placeholder="docker.io/library/nginx:1.25.3" required />
-        <div class="hint">支持 Docker Hub 和 quay.io；地址里带 tag 时默认只同步该 tag</div>
+        <div class="hint">如 docker.io/library/nginx:1.25.3、quay.io/prometheus/node-exporter:v1.7.0；不带 tag 时默认按 latest 处理</div>
       </div>
 
       <div class="form-group">
-        <label for="destination">目标镜像地址 *</label>
-        <input type="text" id="destination" name="destination"
-               placeholder="swr.cn-east-4.myhuaweicloud.com/ascend-sync/nginx:1.25.3" required />
-        <div class="hint">仅支持华为云 SWR 地址</div>
+        <label for="org">目标组织</label>
+        <input type="text" id="org" name="org" value="ascend-sync" placeholder="ascend-sync" />
+        <div class="hint">SWR 组织名，默认 ascend-sync，可按需修改</div>
       </div>
 
-      <div class="form-group">
-        <label for="tags">同步 Tags（可选）</label>
-        <input type="text" id="tags" name="tags"
-               placeholder="留空则同步源地址中的 tag；填 1.25.3,1.24.0 同步多个；填 all 同步全部" />
-        <div class="hint">留空 = 只同步地址里那个 tag；源地址不带 tag 时留空 = 同步全部</div>
+      <div class="preview" id="preview">
+        <span class="k">将同步至：</span><span id="previewTarget">填写源镜像地址后自动生成</span>
       </div>
 
       <button type="submit" id="submitBtn">开始同步</button>

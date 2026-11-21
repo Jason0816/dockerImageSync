@@ -2,21 +2,26 @@
  * Cloudflare Worker — Serverless 代理
  *
  * 接口:
- *   POST /api/sync   触发同步
- *       body: { "source": string, "destination": string, "tags": string }
- *       200 { "ok": true, "run_id": number, "html_url": string }
+ *   GET  /api/config           返回 SWR registry 与默认组织（供前端展示）
+ *   POST /api/sync             触发同步
+ *       body: { "source": string, "org"?: string }
+ *             （兼容旧参数："destination": string, "tags": string）
+ *       200 { "ok": true, "run_id": number, "html_url": string, "destination": string }
  *       400 { "error": string } / 502 { "ok": false, "error": string }
  *
- *   GET /api/status?id=<run_id>   查询同步进度
- *       200 { "ok": true, "status": "queued|in_progress|completed",
- *             "conclusion": "success|failure|cancelled|...", "html_url": string,
- *             "steps": [{ "name": string, "status": string, "conclusion": string }] }
- *       400 / 404 / 502
+ *   GET  /api/status?id=<run_id>   查询同步进度
  *
- * 环境变量: GITHUB_REPO, WORKFLOW_ID, GITHUB_TOKEN, ALLOWED_ORIGIN(可选)
+ * 环境变量:
+ *   GITHUB_REPO, WORKFLOW_ID, GITHUB_TOKEN  （必填）
+ *   SWR_REGISTRY  目标 SWR 域名，默认 swr.cn-east-4.myhuaweicloud.com
+ *   SWR_ORG       默认目标组织，默认 ascend-sync
+ *   ALLOWED_ORIGIN 可选，前端域名，默认 *
  */
 
 const GITHUB_API = 'https://api.github.com';
+const DEFAULT_REGISTRY = 'swr.cn-east-4.myhuaweicloud.com';
+const DEFAULT_ORG = 'ascend-sync';
+const DEFAULT_TAG = 'latest';
 
 function corsHeaders(env) {
   const origin = (env && env.ALLOWED_ORIGIN) ? env.ALLOWED_ORIGIN : '*';
@@ -59,6 +64,81 @@ async function githubFetch(env, path, init = {}) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function registryOf(env) {
+  return (env.SWR_REGISTRY || DEFAULT_REGISTRY).trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+}
+
+/**
+ * 校验组织名（SWR 组织名：字母数字开头，可含 . _ -）
+ */
+function normalizeOrg(env, org) {
+  const value = (org && String(org).trim()) || (env.SWR_ORG ? String(env.SWR_ORG).trim() : DEFAULT_ORG);
+  if (!value) throw new Error('目标组织不能为空');
+  if (value.includes('/') || /\s/.test(value)) throw new Error('目标组织不合法（不能包含 / 或空格）');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error('目标组织不合法（只能包含字母、数字、点、下划线、连字符）');
+  }
+  return value;
+}
+
+/**
+ * 解析镜像地址，返回 { repo, tag }；tag 可能为 null
+ * 例：
+ *   docker.io/library/nginx:1.25.3        -> { repo: 'nginx', tag: '1.25.3' }
+ *   quay.io/prometheus/node-exporter      -> { repo: 'node-exporter', tag: null }
+ *   registry:5000/team/app:v1             -> { repo: 'app', tag: 'v1' }
+ */
+function parseImage(source) {
+  let s = String(source || '').trim();
+  if (!s) return null;
+
+  // 去掉 digest
+  const at = s.indexOf('@');
+  if (at !== -1) s = s.slice(0, at);
+
+  const slash = s.lastIndexOf('/');
+  const colon = s.lastIndexOf(':');
+  let tag = null;
+  if (colon > slash) {
+    tag = s.slice(colon + 1);
+    s = s.slice(0, colon);
+  }
+
+  const repo = s.split('/').filter(Boolean).pop();
+  if (!repo) return null;
+  return { repo, tag: tag || null };
+}
+
+/**
+ * 由源地址推导 SWR 目标地址
+ */
+function buildDestination(env, source, orgRaw) {
+  const parsed = parseImage(source);
+  if (!parsed) throw new Error('无法解析源镜像地址');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parsed.repo)) {
+    throw new Error('源镜像名称不合法');
+  }
+
+  const org = normalizeOrg(env, orgRaw);
+  const tag = parsed.tag || DEFAULT_TAG;
+  return {
+    destination: `${registryOf(env)}/${org}/${parsed.repo}:${tag}`,
+    // 交给 workflow 的源地址：显式补齐 tag，确保只同步单个 tag
+    source: `${source.trim()}${parsed.tag ? '' : `:${DEFAULT_TAG}`}`,
+    repo: parsed.repo,
+    tag,
+    org,
+  };
+}
+
+async function handleConfig(env) {
+  return jsonResponse(env, {
+    ok: true,
+    registry: registryOf(env),
+    default_org: (env.SWR_ORG || DEFAULT_ORG).trim(),
+  });
+}
+
 /**
  * 校验并触发同步
  */
@@ -70,19 +150,29 @@ async function handleSync(request, env) {
     return jsonResponse(env, { error: 'Invalid JSON body' }, 400);
   }
 
-  const { source, destination, tags } = body || {};
+  const { source, destination, tags, org } = body || {};
 
   if (!source || typeof source !== 'string' || !source.trim()) {
     return jsonResponse(env, { error: 'source 不能为空' }, 400);
   }
-  if (!destination || typeof destination !== 'string' || !destination.trim()) {
-    return jsonResponse(env, { error: 'destination 不能为空' }, 400);
-  }
-  if (!destination.includes('swr.')) {
-    return jsonResponse(env, { error: '目标仓库仅支持华为云 SWR（destination 需包含 swr. 域名）' }, 400);
-  }
   if (!env.GITHUB_REPO || !env.WORKFLOW_ID || !env.GITHUB_TOKEN) {
     return jsonResponse(env, { error: 'Server misconfiguration' }, 500);
+  }
+
+  let target;
+  try {
+    if (destination && String(destination).trim()) {
+      // 兼容旧调用：显式传入目标地址
+      const dest = String(destination).trim();
+      if (!dest.includes('swr.')) {
+        return jsonResponse(env, { error: '目标仓库仅支持华为云 SWR（destination 需包含 swr. 域名）' }, 400);
+      }
+      target = { destination: dest, source: source.trim() };
+    } else {
+      target = buildDestination(env, source, org);
+    }
+  } catch (err) {
+    return jsonResponse(env, { error: err.message }, 400);
   }
 
   const dispatchPath = `/repos/${env.GITHUB_REPO}/actions/workflows/${env.WORKFLOW_ID}/dispatches`;
@@ -95,8 +185,8 @@ async function handleSync(request, env) {
       body: JSON.stringify({
         ref: 'main',
         inputs: {
-          source: source.trim(),
-          destination: destination.trim(),
+          source: target.source,
+          destination: target.destination,
           tags: (tags || '').trim(),
         },
       }),
@@ -115,7 +205,7 @@ async function handleSync(request, env) {
     return jsonResponse(env, { ok: false, error: message }, 502);
   }
 
-  // workflow_dispatch 不返回 run id，短暂轮询找到本次触发的运行
+  // workflow_dispatch 不返回 run id，短暂轮询定位本次运行
   for (let i = 0; i < 6; i++) {
     try {
       const resp = await githubFetch(
@@ -129,7 +219,12 @@ async function handleSync(request, env) {
           new Date(r.created_at).getTime() >= startedAt - 15000
         );
         if (run) {
-          return jsonResponse(env, { ok: true, run_id: run.id, html_url: run.html_url });
+          return jsonResponse(env, {
+            ok: true,
+            run_id: run.id,
+            html_url: run.html_url,
+            destination: target.destination,
+          });
         }
       }
     } catch (err) {
@@ -138,14 +233,13 @@ async function handleSync(request, env) {
     await sleep(1500);
   }
 
-  // 触发成功但暂时定位不到运行，前端可只显示“已触发”
-  return jsonResponse(env, { ok: true });
+  return jsonResponse(env, { ok: true, destination: target.destination });
 }
 
 /**
  * 查询运行进度
  */
-async function handleStatus(request, env, url) {
+async function handleStatus(env, url) {
   if (!env.GITHUB_REPO || !env.GITHUB_TOKEN) {
     return jsonResponse(env, { error: 'Server misconfiguration' }, 500);
   }
@@ -200,6 +294,13 @@ export default {
       return optionsResponse(env);
     }
 
+    if (url.pathname === '/api/config') {
+      if (request.method !== 'GET') {
+        return jsonResponse(env, { error: 'Method not allowed. Use GET /api/config' }, 405);
+      }
+      return handleConfig(env);
+    }
+
     if (url.pathname === '/api/sync') {
       if (request.method !== 'POST') {
         return jsonResponse(env, { error: 'Method not allowed. Use POST /api/sync' }, 405);
@@ -211,7 +312,7 @@ export default {
       if (request.method !== 'GET') {
         return jsonResponse(env, { error: 'Method not allowed. Use GET /api/status?id=...' }, 405);
       }
-      return handleStatus(request, env, url);
+      return handleStatus(env, url);
     }
 
     return jsonResponse(env, { error: 'Not found' }, 404);
