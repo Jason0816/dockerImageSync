@@ -3,7 +3,7 @@
 # 值使用 ${ENV_VAR} 占位符，由 GitHub Actions 环境变量注入
 
 # 华为云 SWR（必填）
-swr.cn-north-4.myhuaweicloud.com:
+swr.cn-east-4.myhuaweicloud.com:
   username: ${SWR_USERNAME}
   password: ${SWR_PASSWORD}
 
