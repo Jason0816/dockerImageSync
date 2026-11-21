@@ -1,19 +1,18 @@
 name = "image-sync-proxy"
 main = "index.js"
-compatibility_date = "2024-09-01"
+compatibility_date = "2025-06-01"
 
-# 部署后通过 wrangler 控制台或 Dashboard 设置以下环境变量（secrets）：
-#   GITHUB_REPO     = "owner/repo"
-#   WORKFLOW_ID     = "sync-images.yml"
-#   GITHUB_TOKEN    = "github_pat_xxxxx"（Fine-grained Token，需 Contents/Actions/Workflows 读写）
-#   SWR_REGISTRY    = 可选，默认 "swr.cn-east-4.myhuaweicloud.com"
-#   SWR_ORG         = 可选，默认目标组织 "ascend-sync"
-#   ALLOWED_ORIGIN  = 可选，前端域名，如 "https://image-sync.pages.dev"（默认 *）
+# 静态资源：同一个 Worker 直接托管 ../web 下的前端页面（同源，无 CORS）
+[assets]
+directory = "../web"
 
-[vars]
-# 非敏感变量可在此处定义（如有）
-# SWR_REGISTRY = "swr.cn-east-4.myhuaweicloud.com"
-# SWR_ORG = "ascend-sync"
+# 环境变量（在 Cloudflare 上通过 `wrangler secret put` 设置）：
+#   GITHUB_REPO     仓库 owner/repo
+#   WORKFLOW_ID     工作流文件名，如 sync-images.yml
+#   GITHUB_TOKEN    Fine-grained Token（Contents / Actions / Workflows 读写）
+#   SWR_REGISTRY    可选，默认 swr.cn-east-4.myhuaweicloud.com
+#   SWR_ORG         可选，默认 ascend-sync
+#   ALLOWED_ORIGIN  可选，前端域名（同源部署时无需设置）
 
-# 本地调试：wrangler dev
-#   wrangler secret put GITHUB_REPO / WORKFLOW_ID / GITHUB_TOKEN
+# 本地调试：
+#   wrangler dev
