@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: ''
+      arch:
+        description: '同步的 CPU 架构：amd64 / arm64 / all（默认 amd64；all 会同步全部平台，体积大、耗时长）'
+        required: false
+        type: string
+        default: 'amd64'
 
 jobs:
   sync:
@@ -100,11 +105,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run image-syncer
-        uses: hhyasdf/image-sync-action@v1.1
-        with:
-          auth_file: ./auth.yaml
-          images_file: ./images.yaml
-          proc: 6
+        shell: bash
         env:
           SWR_USERNAME: ${{ secrets.SWR_USERNAME }}
           SWR_PASSWORD: ${{ secrets.SWR_PASSWORD }}
@@ -112,3 +113,27 @@ jobs:
           SOURCE_DOCKERHUB_PASS: ${{ secrets.SOURCE_DOCKERHUB_PASS }}
           SOURCE_QUAY_USER: ${{ secrets.SOURCE_QUAY_USER }}
           SOURCE_QUAY_PASS: ${{ secrets.SOURCE_QUAY_PASS }}
+        run: |
+          set -euo pipefail
+
+          ARCH="${{ github.event.inputs.arch }}"
+          if [ -z "$ARCH" ]; then
+            ARCH="amd64"
+          fi
+
+          VERSION="v1.5.5"
+          echo "Downloading image-syncer ${VERSION} ..."
+          curl -fsSL -o image-syncer.tar.gz \
+            "https://github.com/AliyunContainerService/image-syncer/releases/download/${VERSION}/image-syncer-${VERSION}-linux-amd64.tar.gz"
+          tar -xzf image-syncer.tar.gz image-syncer
+          chmod +x image-syncer
+
+          ARGS=(--auth=./auth.yaml --images=./images.yaml --os=linux --proc=6 --retries=2)
+          if [ "$ARCH" != "all" ]; then
+            ARGS+=(--arch="$ARCH")
+            echo "Arch filter: $ARCH"
+          else
+            echo "Arch filter: all (multi-arch, slow)"
+          fi
+
+          ./image-syncer "${ARGS[@]}"

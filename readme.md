@@ -30,7 +30,7 @@
 
 | 层 | 选型 |
 |---|---|
-| 同步引擎 | `image-syncer`，通过 `hhyasdf/image-sync-action@v1.1` 调用 |
+| 同步引擎 | `image-syncer` v1.5.5（workflow 中下载二进制直接运行，支持 `--arch` 过滤） |
 | CI/CD | GitHub Actions（`workflow_dispatch` 触发） |
 | 代理 | Cloudflare Worker（或 Vercel Edge Function，二选一） |
 | 前端 | 原生 HTML/JS 或 Vue 3 + Vite，部署到 Cloudflare Pages |
@@ -56,13 +56,14 @@ repo/
 
 ### 5.1 Workflow：`.github/workflows/sync-images.yml`
 
-**触发方式**：`workflow_dispatch`，接收三个 inputs。
+**触发方式**：`workflow_dispatch`，接收四个 inputs。
 
 | input | 必填 | 类型 | 说明 |
 |---|---|---|---|
 | `source` | 是 | string | 源镜像地址，如 `docker.io/library/nginx:1.25.3` 或 `quay.io/prometheus/node-exporter:v1.7.0` |
 | `destination` | 是 | string | 目标镜像地址，如 `swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3` |
 | `tags` | 否 | string | 逗号分隔的 tag 列表；留空时若源地址带 tag 则只同步该 tag（默认单 tag），源地址不带 tag 则同步全部；显式填 `all` 强制同步全部 |
+| `arch` | 否 | string | 同步架构：`amd64`（默认）/ `arm64` / `all`（多架构，体积大耗时长） |
 
 **Jobs 步骤**：
 1. `actions/checkout@v4` 检出仓库。
@@ -70,8 +71,10 @@ repo/
    - 若 `tags` 显式给出（非空且不为 `all`），对每个 tag 生成一条 `<source>:<tag> → <destination>:<tag>` 规则。
    - 若 `tags` 为空且 `source` 自带 tag（如 `nginx:1.25.3`），只生成该单 tag 的同步规则（默认行为，避免误触发全量同步）。
    - 若 `tags` 为空且 `source` 不带 tag，或 `tags=all`，规则写为 `"<source-without-tag>: <destination-without-tag>"`（全 tag 同步）。
-3. 调用 `hhyasdf/image-sync-action@v1.1`，传入 `auth_file: ./auth.yaml`、`images_file: ./images.yaml`、`proc: 6`。
-4. 在 `env` 中注入 Secrets：`SWR_USERNAME`、`SWR_PASSWORD`，以及可选的 Docker Hub / Quay 源端凭证。
+3. 下载 `image-syncer` 二进制并直接执行（不再通过 `hhyasdf/image-sync-action`，因为该 action 不暴露 `--arch` 参数）：
+   `./image-syncer --auth=./auth.yaml --images=./images.yaml --os=linux --arch=<arch> --proc=6 --retries=2`。
+   多架构镜像默认只同步 `amd64`，避免上传数倍数据（`nginx` 全平台约 500MB、近百个任务，跨境推送可能耗时数十分钟）。
+4. 在 `env` 中注入 Secrets：`SWR_USERNAME`、`SWR_PASSWORD`，以及可选的 Docker Hub / Quay 源端凭证（用于规避匿名拉取限流）。
 
 **关键约束**：`auth.yaml` 固定来自仓库，不接受前端传入；工作流只覆盖 `images.yaml`。
 
