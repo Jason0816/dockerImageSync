@@ -60,8 +60,12 @@ jobs:
           DEST_BASE=$(strip_tag "$DESTINATION")
           SOURCE_TAG=$(extract_tag "$SOURCE")
 
-          if [ -n "$TAGS" ] && [ "$TAGS" != "all" ]; then
-            # 1) 显式指定 tag 列表
+          if [ "$TAGS" = "all" ]; then
+            # 1) 显式 all：强制同步全部 tag（忽略源地址里的 tag）
+            echo "Mode: all tags (forced)"
+            printf '%s: %s\n' "$SOURCE_BASE" "$DEST_BASE" > images.yaml
+          elif [ -n "$TAGS" ]; then
+            # 2) 显式指定 tag 列表
             echo "Mode: explicit tags ($TAGS)"
             : > images.yaml
             IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
@@ -71,11 +75,11 @@ jobs:
               printf '%s:%s: %s:%s\n' "$SOURCE_BASE" "$tag" "$DEST_BASE" "$tag" >> images.yaml
             done
           elif [ -n "$SOURCE_TAG" ]; then
-            # 2) 源地址自带 tag 且未指定 tags：只同步这个 tag（默认行为）
+            # 3) 源地址自带 tag 且未指定 tags：只同步这个 tag（默认行为）
             echo "Mode: single tag from source address ($SOURCE_TAG)"
             printf '%s:%s: %s:%s\n' "$SOURCE_BASE" "$SOURCE_TAG" "$DEST_BASE" "$SOURCE_TAG" > images.yaml
           else
-            # 3) 源地址不带 tag 且未指定 tags：同步全部 tag
+            # 4) 源地址不带 tag 且未指定 tags：同步全部 tag
             echo "Mode: all tags"
             printf '%s: %s\n' "$SOURCE_BASE" "$DEST_BASE" > images.yaml
           fi
