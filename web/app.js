@@ -6,10 +6,13 @@
  */
 
 // ============================================================
-// 配置：部署时替换为 Worker 实际地址
-// 同源部署（local/server.mjs）时会注入 ''，即直接请求当前服务
+// 配置：默认同源（由 local/server.mjs 提供服务时无需配置）
+// 部署到独立静态站点时，在 index.html 里前置设置：
+//   <script>window.PROXY_URL = 'https://your-worker.workers.dev';</script>
 // ============================================================
-const PROXY_URL = (window.PROXY_URL || 'https://your-worker.your-subdomain.workers.dev').replace(/\/$/, '');
+const IS_FILE_PROTOCOL = location.protocol === 'file:';
+const PROXY_URL = (typeof window.PROXY_URL === 'string' ? window.PROXY_URL : '').replace(/\/$/, '');
+const OPEN_HINT = '请通过服务地址打开页面（如 http://192.168.148.4:8787），不要直接双击本地 html 文件';
 
 const POLL_INTERVAL_MS = 8000;
 const POLL_TIMEOUT_MS = 60 * 60 * 1000;
@@ -78,9 +81,14 @@ function renderPreview() {
 }
 
 async function loadConfig() {
+  if (IS_FILE_PROTOCOL) {
+    renderPreview();
+    showResult('error', `❌ 当前是本地文件方式打开，无法调用同步服务。${OPEN_HINT}`);
+    return;
+  }
   try {
     const resp = await fetch(`${PROXY_URL}/api/config`);
-    if (!resp.ok) return;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     if (data && data.ok) {
       scrollInfo.registry = data.registry || FALLBACK_REGISTRY;
@@ -88,8 +96,9 @@ async function loadConfig() {
       if (!orgInput.value.trim()) orgInput.value = scrollInfo.defaultOrg;
       renderPreview();
     }
-  } catch {
+  } catch (err) {
     renderPreview();
+    showResult('error', `❌ 无法连接同步服务（${PROXY_URL || location.origin}）：${err.message}`);
   }
 }
 
@@ -210,6 +219,11 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   stopPolling();
 
+  if (IS_FILE_PROTOCOL) {
+    showResult('error', `❌ 无法触发同步：${OPEN_HINT}`);
+    return;
+  }
+
   const source = sourceInput.value.trim();
   const org = orgInput.value.trim();
 
@@ -254,7 +268,7 @@ form.addEventListener('submit', async (e) => {
     submitBtn.disabled = false;
     submitBtn.textContent = '开始同步';
   } catch (err) {
-    showResult('error', `❌ 网络错误，请检查代理地址是否正确：${err.message}`);
+    showResult('error', `❌ 网络错误（请求 ${PROXY_URL || location.origin}/api/sync）：${err.message}`);
     submitBtn.disabled = false;
     submitBtn.textContent = '开始同步';
   }
