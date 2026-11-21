@@ -1,0 +1,88 @@
+name: Sync Container Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: '源镜像地址，如 docker.io/library/nginx:1.25.3 或 quay.io/prometheus/node-exporter:v1.7.0'
+        required: true
+        type: string
+      destination:
+        description: '目标镜像地址，如 swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3'
+        required: true
+        type: string
+      tags:
+        description: '逗号分隔的 tag 列表；留空或 all 表示同步全部 tag'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate images.yaml from inputs
+        shell: bash
+        run: |
+          SOURCE="${{ github.event.inputs.source }}"
+          DESTINATION="${{ github.event.inputs.destination }}"
+          TAGS="${{ github.event.inputs.tags }}"
+
+          echo "Generating images.yaml..."
+          echo "  Source:      $SOURCE"
+          echo "  Destination: $DESTINATION"
+          echo "  Tags:        ${TAGS:-(all)}"
+
+          # Strip tag from source and destination (everything after the last ':')
+          # Handle the case where the source/destination may or may not contain a tag
+          strip_tag() {
+            local addr="$1"
+            # If there's a '/' after the ':', it's a port, not a tag — keep the whole address
+            if [[ "$addr" =~ ^([^:]+):([^:/]+)$ ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "$addr"
+            fi
+          }
+
+          SOURCE_BASE=$(strip_tag "$SOURCE")
+          DEST_BASE=$(strip_tag "$DESTINATION")
+
+          if [ -z "$TAGS" ] || [ "$TAGS" = "all" ]; then
+            # Sync all tags: source (without tag) -> destination (without tag)
+            echo "Mode: all tags"
+            cat > images.yaml <<EOF
+${SOURCE_BASE}: ${DEST_BASE}
+EOF
+          else
+            # Sync specific tags
+            echo "Mode: specific tags"
+            > images.yaml
+            IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+            for tag in "${TAG_ARRAY[@]}"; do
+              tag=$(echo "$tag" | xargs)  # trim whitespace
+              [ -z "$tag" ] && continue
+              echo "${SOURCE_BASE}:${tag}: ${DEST_BASE}:${tag}" >> images.yaml
+            done
+          fi
+
+          echo "--- Generated images.yaml ---"
+          cat images.yaml
+          echo "-----------------------------"
+
+      - name: Run image-syncer
+        uses: hhyasdf/image-sync-action@v1.1
+        with:
+          auth_file: ./auth.yaml
+          images_file: ./images.yaml
+          proc: 6
+        env:
+          SWR_USERNAME: ${{ secrets.SWR_USERNAME }}
+          SWR_PASSWORD: ${{ secrets.SWR_PASSWORD }}
+          SOURCE_DOCKERHUB_USER: ${{ secrets.SOURCE_DOCKERHUB_USER }}
+          SOURCE_DOCKERHUB_PASS: ${{ secrets.SOURCE_DOCKERHUB_PASS }}
+          SOURCE_QUAY_USER: ${{ secrets.SOURCE_QUAY_USER }}
+          SOURCE_QUAY_PASS: ${{ secrets.SOURCE_QUAY_PASS }}

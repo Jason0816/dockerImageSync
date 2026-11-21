@@ -1,0 +1,6 @@
+# 默认同步规则（可被 workflow_dispatch 动态覆盖）
+# 格式: <源镜像地址>: <目标镜像地址>
+#
+# 示例：
+# docker.io/library/nginx: swr.cn-north-4.myhuaweicloud.com/your-org/nginx
+# docker.io/library/nginx:1.25.3: swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3
