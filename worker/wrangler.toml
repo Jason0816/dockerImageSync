@@ -10,6 +10,7 @@ directory = "../web"
 #   GITHUB_REPO     仓库 owner/repo
 #   WORKFLOW_ID     工作流文件名，如 sync-images.yml
 #   GITHUB_TOKEN    Fine-grained Token（Contents / Actions / Workflows 读写）
+#   APP_PASSWORD    前端访问口令（登录后才能调用 API）
 #   SWR_REGISTRY    可选，默认 swr.cn-east-4.myhuaweicloud.com
 #   SWR_ORG         可选，默认 ascend-sync
 #   ALLOWED_ORIGIN  可选，前端域名（同源部署时无需设置）

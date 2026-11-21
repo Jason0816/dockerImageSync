@@ -66,6 +66,105 @@ async function githubFetch(env, path, init = {}) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/* ---------------- 访问口令认证 ---------------- */
+
+const AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 令牌有效期 7 天
+const encoder = new TextEncoder();
+
+function base64url(bytes) {
+  let s = '';
+  const arr = new Uint8Array(bytes);
+  for (const b of arr) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function timingSafeEqual(a, b) {
+  const ab = encoder.encode(String(a));
+  const bb = encoder.encode(String(b));
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
+}
+
+async function hmacKey(env) {
+  return crypto.subtle.importKey(
+    'raw',
+    encoder.encode(env.APP_PASSWORD),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+}
+
+async function signPayload(env, payload) {
+  const key = await hmacKey(env);
+  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+  return base64url(sig);
+}
+
+async function issueToken(env) {
+  const exp = Date.now() + AUTH_TTL_MS;
+  const payload = `v1.${exp}`;
+  const sig = await signPayload(env, payload);
+  return { token: `${payload}.${sig}`, expires_at: new Date(exp).toISOString() };
+}
+
+async function verifyToken(env, token) {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'v1') return false;
+  const exp = Number(parts[1]);
+  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+  const expected = await signPayload(env, `v1.${exp}`);
+  return timingSafeEqual(parts[2], expected);
+}
+
+function bearerToken(request) {
+  const header = request.headers.get('Authorization') || '';
+  if (header.startsWith('Bearer ')) return header.slice(7).trim();
+  return (request.headers.get('X-Auth-Token') || '').trim();
+}
+
+/**
+ * 校验登录态；通过返回 null，否则返回错误响应
+ */
+async function requireAuth(request, env) {
+  if (!env.APP_PASSWORD) {
+    return jsonResponse(env, { error: '服务端未配置访问口令（APP_PASSWORD）' }, 500);
+  }
+  if (!(await verifyToken(env, bearerToken(request)))) {
+    return jsonResponse(env, { error: '未登录或登录已过期' }, 401);
+  }
+  return null;
+}
+
+async function handleLogin(request, env) {
+  if (!env.APP_PASSWORD) {
+    return jsonResponse(env, { error: '服务端未配置访问口令（APP_PASSWORD）' }, 500);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse(env, { error: 'Invalid JSON body' }, 400);
+  }
+
+  const password = String((body && body.password) || '');
+  if (!password) {
+    return jsonResponse(env, { error: '请输入访问口令' }, 400);
+  }
+
+  if (!timingSafeEqual(password, env.APP_PASSWORD)) {
+    await sleep(300); // 轻微延迟，降低暴力破解速度
+    return jsonResponse(env, { error: '口令错误' }, 401);
+  }
+
+  const { token, expires_at } = await issueToken(env);
+  return jsonResponse(env, { ok: true, token, expires_at });
+}
+
 function registryOf(env) {
   return (env.SWR_REGISTRY || DEFAULT_REGISTRY).trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
@@ -314,10 +413,30 @@ export default {
       return optionsResponse(env);
     }
 
+    // 登录：无需鉴权
+    if (url.pathname === '/api/login') {
+      if (request.method !== 'POST') {
+        return jsonResponse(env, { error: 'Method not allowed. Use POST /api/login' }, 405);
+      }
+      return handleLogin(request, env);
+    }
+
+    // 以下接口均需登录
+    if (url.pathname === '/api/session') {
+      if (request.method !== 'GET') {
+        return jsonResponse(env, { error: 'Method not allowed. Use GET /api/session' }, 405);
+      }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
+      return jsonResponse(env, { ok: true });
+    }
+
     if (url.pathname === '/api/config') {
       if (request.method !== 'GET') {
         return jsonResponse(env, { error: 'Method not allowed. Use GET /api/config' }, 405);
       }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
       return handleConfig(env);
     }
 
@@ -325,6 +444,8 @@ export default {
       if (request.method !== 'POST') {
         return jsonResponse(env, { error: 'Method not allowed. Use POST /api/sync' }, 405);
       }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
       return handleSync(request, env);
     }
 
@@ -332,6 +453,8 @@ export default {
       if (request.method !== 'GET') {
         return jsonResponse(env, { error: 'Method not allowed. Use GET /api/status?id=...' }, 405);
       }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
       return handleStatus(env, url);
     }
 

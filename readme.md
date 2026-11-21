@@ -100,13 +100,19 @@ quay.io:
 
 ### 5.3 Serverless 代理：`worker/index.js`
 
+**鉴权**：除 `POST /api/login` 外，所有接口都需要请求头 `Authorization: Bearer <token>`；令牌由 Worker 用 `APP_PASSWORD` 做 HMAC-SHA256 签名，有效期 7 天。
+
+- `POST /api/login`，body `{ "password": string }` → `200 { ok, token, expires_at }` / `401 { error }`
+- `GET /api/session` → `200 { ok: true }`（校验令牌是否仍有效）/ `401`
+- 口令来自 Worker 环境变量 `APP_PASSWORD`；未配置时接口返回 500，避免无鉴权裸奔
+
 **接口**：`POST /api/sync`
-**请求体**：`{ "source": string, "org"?: string }`
+**请求体**：`{ "source": string, "org"?: string, "arch"?: "amd64"|"arm64"|"all" }`
 （兼容旧参数 `{ "destination": string, "tags": string }`，显式传 `destination` 时不再推导）
-**响应**：`200 { "ok": true, "run_id": number, "html_url": string, "destination": string }` / `400 { "error": string }` / `502 { "ok": false, "error": string }`
+**响应**：`200 { "ok": true, "run_id": number, "html_url": string, "destination": string, "arch": string }` / `400 { "error": string }` / `401 { error: string }` / `502 { "ok": false, "error": string }`
 
 **配置查询**：`GET /api/config`
-**响应**：`200 { "ok": true, "registry": string, "default_org": string }`（前端用于展示目标路径预览）
+**响应**：`200 { "ok": true, "registry": string, "default_org": string, "default_arch": string }`（前端用于展示目标路径预览）
 
 **进度查询**：`GET /api/status?id=<run_id>`
 **响应**：`200 { "ok": true, "status": "queued|in_progress|completed", "conclusion": string, "html_url": string, "steps": [{ "name": string, "status": string, "conclusion": string }] }` / `400 / 404 / 502`
@@ -124,13 +130,15 @@ quay.io:
 6. 根据 GitHub 返回状态码映射响应，并设置 CORS 头 `Access-Control-Allow-Origin`（生产环境应限定为前端域名，可用 `ALLOWED_ORIGIN` 环境变量配置）。
 7. dispatch 成功后轮询最近运行列表，定位本次触发的 `run_id` 与 `html_url` 返回给前端；`/api/status` 按 `run_id` 查询运行状态与步骤，供前端展示实时进度。
 
-**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`；可选 `SWR_REGISTRY`（默认 `swr.cn-east-4.myhuaweicloud.com`）、`SWR_ORG`（默认 `ascend-sync`）、`ALLOWED_ORIGIN`。
+**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`、`APP_PASSWORD`；可选 `SWR_REGISTRY`（默认 `swr.cn-east-4.myhuaweicloud.com`）、`SWR_ORG`（默认 `ascend-sync`）、`ALLOWED_ORIGIN`。
 
 ### 5.4 前端：`web/index.html` + `web/app.js`
 
-**页面元素**：源镜像输入框、目标组织输入框（默认 `ascend-sync`）、目标架构下拉框（`amd64` / `arm64` / `all`，默认 `amd64`）、目标路径实时预览、提交按钮、进度面板、最近同步列表、结果提示区。
+**页面元素**：访问口令登录页、源镜像输入框、目标组织输入框（默认 `ascend-sync`）、目标架构下拉框（`amd64` / `arm64` / `all`，默认 `amd64`）、目标路径实时预览、提交按钮、进度面板、最近同步列表、结果提示区、退出按钮。
 
 **行为**：
+1. 首屏要求输入访问口令；登录成功后令牌存 `localStorage`（key `imageSync.auth.v1`），之后所有请求自动带 `Authorization: Bearer`。
+2. 打开页面时用 `GET /api/session` 校验令牌，失效则回到登录页；任意接口返回 401 也会自动登出并提示重新登录。
 1. 提交时阻止默认表单行为，校验源镜像地址非空且可解析。
 2. 前端按与 Worker 相同的规则在本地预览目标路径（`GET /api/config` 获取 registry 与默认组织），用户无需填写目标地址。
 3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org, arch }) })`。
@@ -152,6 +160,7 @@ quay.io:
 | Worker 环境变量 | `GITHUB_REPO` | `owner/repo` |
 | Worker 环境变量 | `WORKFLOW_ID` | `sync-images.yml` |
 | Worker 环境变量 | `GITHUB_TOKEN` | Fine-grained Token，需 Contents / Actions / Workflows 读写 |
+| Worker 环境变量 | `APP_PASSWORD` | 前端访问口令，登录后才能调用接口 |
 | Worker 环境变量 | `SWR_REGISTRY` | 可选，目标 SWR 域名，默认 `swr.cn-east-4.myhuaweicloud.com` |
 | Worker 环境变量 | `SWR_ORG` | 可选，默认目标组织，默认 `ascend-sync` |
 | 前端配置 | `PROXY_URL` | Worker 部署地址 |
@@ -187,4 +196,5 @@ quay.io:
 5. Worker 的 CORS 在生产环境应限定为前端实际域名，避免任意站点调用。
 6. 若使用 Vercel 替代 Cloudflare Worker，接口契约与请求体保持不变，仅部署方式和环境变量配置入口不同。
 7. 代理层对 `destination` 做 `swr.` 域名前缀校验，是低成本防止误推送至其他仓库的有效手段，建议保留。
+8. 访问口令鉴权只保护 API（静态页面本身是公开的，但页面不含任何凭证）。口令请用足够长度的随机串；如需更强防护（SSO、IP 白名单），可叠加 Cloudflare Access。
 

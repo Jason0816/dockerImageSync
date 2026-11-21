@@ -241,14 +241,56 @@
     .history-list li a:hover { text-decoration: underline; }
     .history-list li.success .h-dest { color: #86efac; }
     .history-list li.failure .h-dest { color: #fca5a5; }
+
+    /* 登录视图 */
+    .app-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .app-head h1 { margin-bottom: 0; }
+    .app-head .link-btn { flex: none; font-size: 0.78rem; }
+
+    #loginMsg {
+      margin-top: 1rem;
+      min-height: 1.2rem;
+      font-size: 0.82rem;
+      color: #f87171;
+      line-height: 1.4;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>🐳 容器镜像同步</h1>
-    <p class="subtitle">填入 Docker Hub / quay.io 镜像地址，自动同步到华为云 SWR</p>
+    <!-- 登录视图 -->
+    <div id="loginView">
+      <h1>🐳 容器镜像同步</h1>
+      <p class="subtitle">请输入访问口令后使用</p>
 
-    <form id="syncForm" autocomplete="off">
+      <form id="loginForm" autocomplete="off">
+        <div class="form-group">
+          <label for="password">访问口令</label>
+          <input type="password" id="password" name="password" placeholder="请输入访问口令" required />
+        </div>
+        <button type="submit" id="loginBtn">登录</button>
+      </form>
+
+      <div id="loginMsg"></div>
+    </div>
+
+    <!-- 主视图（登录后显示） -->
+    <div id="appView" style="display: none;">
+      <div class="app-head">
+        <h1>🐳 容器镜像同步</h1>
+        <button type="button" id="logoutBtn" class="link-btn">退出</button>
+      </div>
+      <p class="subtitle">填入 Docker Hub / quay.io 镜像地址，自动同步到华为云 SWR</p>
+
+      <form id="syncForm" autocomplete="off">
       <div class="form-group">
         <label for="source">源镜像地址 *</label>
         <input type="text" id="source" name="source"
@@ -296,6 +338,7 @@
         <button type="button" id="clearHistory" class="link-btn">清空记录</button>
       </div>
       <ul class="history-list" id="historyList"></ul>
+    </div>
     </div>
   </div>
 

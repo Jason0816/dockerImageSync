@@ -1,9 +1,9 @@
 /**
  * 前端逻辑 — 容器镜像同步
  *
+ * 需要访问口令登录；登录后令牌存 localStorage，所有 API 带 Authorization 头。
  * 只需填源镜像地址：目标路径由 Worker 按 SWR_REGISTRY + 组织自动推导。
- * 进度会持久化到 localStorage：刷新页面后自动恢复上次同步状态，并保留最近记录。
- * 注意：此处不得出现任何 GitHub Token 或 SWR 凭证。
+ * 注意：前端代码中不得出现任何 GitHub Token 或 SWR 凭证。
  */
 
 const IS_FILE_PROTOCOL = location.protocol === 'file:';
@@ -18,12 +18,21 @@ const DEFAULT_TAG = 'latest';
 const FALLBACK_REGISTRY = 'swr.cn-east-4.myhuaweicloud.com';
 const FALLBACK_ORG = 'ascend-sync';
 
+const AUTH_KEY = 'imageSync.auth.v1';
 const LAST_RUN_KEY = 'imageSync.lastRun.v1';
 const HISTORY_KEY = 'imageSync.history.v1';
 const HISTORY_LIMIT = 10;
 const LAST_RUN_TTL_MS = 24 * 60 * 60 * 1000;
 
 // DOM
+const loginView = document.getElementById('loginView');
+const appView = document.getElementById('appView');
+const loginForm = document.getElementById('loginForm');
+const passwordInput = document.getElementById('password');
+const loginBtn = document.getElementById('loginBtn');
+const loginMsg = document.getElementById('loginMsg');
+const logoutBtn = document.getElementById('logoutBtn');
+
 const form = document.getElementById('syncForm');
 const sourceInput = document.getElementById('source');
 const orgInput = document.getElementById('org');
@@ -44,6 +53,60 @@ let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
 let pollStartedAt = 0;
 
+/* ---------------- 登录态 ---------------- */
+
+function getToken() {
+  try {
+    return localStorage.getItem(AUTH_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function setToken(token) {
+  try {
+    localStorage.setItem(AUTH_KEY, token);
+  } catch { /* ignore */ }
+}
+
+function clearToken() {
+  try {
+    localStorage.removeItem(AUTH_KEY);
+  } catch { /* ignore */ }
+}
+
+function setLoginMsg(message) {
+  loginMsg.textContent = message || '';
+}
+
+function showLogin(message) {
+  appView.style.display = 'none';
+  loginView.style.display = 'block';
+  setLoginMsg(message || '');
+  if (!IS_FILE_PROTOCOL) passwordInput.focus();
+}
+
+function showApp() {
+  loginView.style.display = 'none';
+  appView.style.display = 'block';
+  renderPreview();
+}
+
+/** 统一带上登录令牌的 fetch */
+function apiFetch(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(`${PROXY_URL}${path}`, { ...options, headers });
+}
+
+/** 登录失效处理 */
+function handleUnauthorized(message) {
+  clearToken();
+  stopPolling();
+  showLogin(message || '登录已过期，请重新登录');
+}
+
 /* ---------------- 本地持久化 ---------------- */
 
 function readJSON(key, fallback) {
@@ -58,9 +121,7 @@ function readJSON(key, fallback) {
 function writeJSON(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* 忽略配额/隐私模式异常 */
-  }
+  } catch { /* 忽略配额/隐私模式异常 */ }
 }
 
 function loadLastRun() {
@@ -231,13 +292,12 @@ function renderHistory() {
 /* ---------------- 配置 / 进度 ---------------- */
 
 async function loadConfig() {
-  if (IS_FILE_PROTOCOL) {
-    renderPreview();
-    showResult('error', `❌ 当前是本地文件方式打开，无法调用同步服务。${OPEN_HINT}`);
-    return;
-  }
   try {
-    const resp = await fetch(`${PROXY_URL}/api/config`);
+    const resp = await apiFetch('/api/config');
+    if (resp.status === 401) {
+      handleUnauthorized('登录已过期，请重新登录');
+      return;
+    }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     if (data && data.ok) {
@@ -280,11 +340,16 @@ async function pollStatus(runId, htmlUrl, destination) {
   }
 
   try {
-    const resp = await fetch(`${PROXY_URL}/api/status?id=${encodeURIComponent(runId)}`);
+    const resp = await apiFetch(`/api/status?id=${encodeURIComponent(runId)}`);
+
+    if (resp.status === 401) {
+      handleUnauthorized('登录已过期，请重新登录');
+      return;
+    }
+
     const data = await resp.json();
 
     if (resp.status === 404) {
-      // 运行已不存在（被清理）：清除本地记录
       stopPolling();
       try { localStorage.removeItem(LAST_RUN_KEY); } catch { /* ignore */ }
       progressDiv.classList.remove('visible');
@@ -381,6 +446,57 @@ async function restoreLastRun() {
 sourceInput.addEventListener('input', renderPreview);
 orgInput.addEventListener('input', renderPreview);
 
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  if (IS_FILE_PROTOCOL) {
+    setLoginMsg(OPEN_HINT);
+    return;
+  }
+
+  const password = passwordInput.value;
+  if (!password) {
+    setLoginMsg('请输入访问口令');
+    return;
+  }
+
+  loginBtn.disabled = true;
+  loginBtn.textContent = '登录中…';
+  setLoginMsg('');
+
+  try {
+    const resp = await fetch(`${PROXY_URL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok && data.ok && data.token) {
+      setToken(data.token);
+      passwordInput.value = '';
+      showApp();
+      await loadConfig();
+      restoreLastRun();
+    } else {
+      setLoginMsg(data.error || `登录失败 (HTTP ${resp.status})`);
+    }
+  } catch (err) {
+    setLoginMsg(`网络错误（${PROXY_URL || location.origin}）：${err.message}`);
+  } finally {
+    loginBtn.disabled = false;
+    loginBtn.textContent = '登录';
+  }
+});
+
+logoutBtn.addEventListener('click', () => {
+  clearToken();
+  stopPolling();
+  progressDiv.classList.remove('visible');
+  showResult('error', '已退出登录。');
+  showLogin('已退出登录');
+});
+
 clearHistoryBtn.addEventListener('click', () => {
   stopPolling();
   try {
@@ -422,11 +538,18 @@ form.addEventListener('submit', async (e) => {
   showResult('loading', '正在触发同步任务…');
 
   try {
-    const response = await fetch(`${PROXY_URL}/api/sync`, {
+    const response = await apiFetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source, org, arch }),
     });
+
+    if (response.status === 401) {
+      handleUnauthorized('登录已过期，请重新登录');
+      submitBtn.disabled = false;
+      submitBtn.textContent = '开始同步';
+      return;
+    }
 
     const data = await response.json();
 
@@ -466,6 +589,29 @@ form.addEventListener('submit', async (e) => {
 
 /* ---------------- 初始化 ---------------- */
 
-renderHistory();
-loadConfig();
-restoreLastRun();
+async function boot() {
+  renderHistory();
+
+  if (IS_FILE_PROTOCOL) {
+    showLogin(OPEN_HINT);
+    return;
+  }
+
+  const token = getToken();
+  if (token) {
+    try {
+      const resp = await apiFetch('/api/session');
+      if (resp.ok) {
+        showApp();
+        await loadConfig();
+        restoreLastRun();
+        return;
+      }
+    } catch { /* 网络异常则回到登录 */ }
+    clearToken();
+  }
+
+  showLogin();
+}
+
+boot();
