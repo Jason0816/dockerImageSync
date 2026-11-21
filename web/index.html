@@ -8,7 +8,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
       background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
       color: #e2e8f0;
       min-height: 100vh;
@@ -25,12 +25,12 @@
       border-radius: 16px;
       padding: 2.5rem;
       width: 100%;
-      max-width: 560px;
+      max-width: 640px;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     }
 
     h1 {
-      font-size: 1.5rem;
+      font-size: 1.4rem;
       font-weight: 700;
       margin-bottom: 0.25rem;
       background: linear-gradient(90deg, #38bdf8, #818cf8);
@@ -39,22 +39,16 @@
       background-clip: text;
     }
 
-    .subtitle {
-      font-size: 0.85rem;
-      color: #94a3b8;
-      margin-bottom: 2rem;
-    }
+    .subtitle { font-size: 0.85rem; color: #94a3b8; margin-bottom: 1.75rem; }
 
-    .form-group {
-      margin-bottom: 1.25rem;
-    }
+    .form-group { margin-bottom: 1.15rem; }
 
     label {
       display: block;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 600;
       color: #94a3b8;
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.35rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
@@ -72,17 +66,9 @@
     }
 
     input::placeholder { color: #475569; }
+    input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15); }
 
-    input:focus {
-      border-color: #38bdf8;
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-    }
-
-    .hint {
-      font-size: 0.75rem;
-      color: #64748b;
-      margin-top: 0.3rem;
-    }
+    .hint { font-size: 0.72rem; color: #64748b; margin-top: 0.3rem; }
 
     button {
       width: 100%;
@@ -103,8 +89,8 @@
     button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     #result {
-      margin-top: 1.25rem;
-      padding: 0.8rem 1rem;
+      margin-top: 1.1rem;
+      padding: 0.75rem 1rem;
       border-radius: 8px;
       font-size: 0.85rem;
       line-height: 1.5;
@@ -112,61 +98,127 @@
       word-break: break-all;
     }
 
-    #result.success {
-      display: block;
-      background: rgba(34, 197, 94, 0.12);
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      color: #4ade80;
+    #result.success { display: block; background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.3); color: #4ade80; }
+    #result.error { display: block; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; }
+    #result.loading { display: block; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); color: #7dd3fc; }
+
+    /* 进度面板 */
+    #progress {
+      display: none;
+      margin-top: 1.5rem;
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      padding-top: 1.25rem;
     }
 
-    #result.error {
-      display: block;
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      color: #f87171;
+    #progress.visible { display: block; }
+
+    .progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.9rem;
     }
 
-    #result.loading {
-      display: block;
-      background: rgba(56, 189, 248, 0.1);
-      border: 1px solid rgba(56, 189, 248, 0.25);
+    .progress-title { font-size: 0.9rem; font-weight: 600; color: #cbd5e1; }
+
+    .badge {
+      font-size: 0.72rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge.queued { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; }
+    .badge.running { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; }
+    .badge.success { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+    .badge.failure { background: rgba(239, 68, 68, 0.18); color: #f87171; }
+    .badge.cancelled { background: rgba(234, 179, 8, 0.18); color: #facc15; }
+
+    .steps { list-style: none; display: flex; flex-direction: column; gap: 0.45rem; }
+
+    .steps li {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.82rem;
+      color: #94a3b8;
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.35);
+    }
+
+    .steps li .icon { width: 1.1rem; text-align: center; flex: none; }
+    .steps li.success { color: #4ade80; }
+    .steps li.failure { color: #f87171; }
+    .steps li.active { color: #7dd3fc; }
+
+    .run-link {
+      display: inline-block;
+      margin-top: 0.9rem;
+      font-size: 0.8rem;
       color: #7dd3fc;
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(125, 211, 252, 0.4);
     }
+
+    .run-link:hover { color: #bae6fd; }
+
+    .spinner {
+      display: inline-block;
+      width: 0.8rem;
+      height: 0.8rem;
+      border: 2px solid rgba(125, 211, 252, 0.3);
+      border-top-color: #7dd3fc;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: -1px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>🐳 容器镜像同步</h1>
-    <p class="subtitle">将 Docker Hub / quay.io 镜像同步至华为云 SWR</p>
+    <p class="subtitle">将 Docker Hub / quay.io 镜像同步至华为云 SWR，同步进度实时展示</p>
 
     <form id="syncForm" autocomplete="off">
       <div class="form-group">
         <label for="source">源镜像地址 *</label>
         <input type="text" id="source" name="source"
-               placeholder="docker.io/library/nginx:1.25.3"
-               required />
-        <div class="hint">支持 Docker Hub 和 quay.io，格式：registry/org/image:tag</div>
+               placeholder="docker.io/library/nginx:1.25.3" required />
+        <div class="hint">支持 Docker Hub 和 quay.io；地址里带 tag 时默认只同步该 tag</div>
       </div>
 
       <div class="form-group">
         <label for="destination">目标镜像地址 *</label>
         <input type="text" id="destination" name="destination"
-               placeholder="swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3"
-               required />
+               placeholder="swr.cn-east-4.myhuaweicloud.com/ascend-sync/nginx:1.25.3" required />
         <div class="hint">仅支持华为云 SWR 地址</div>
       </div>
 
       <div class="form-group">
         <label for="tags">同步 Tags（可选）</label>
         <input type="text" id="tags" name="tags"
-               placeholder="留空同步全部 tag，或输入 1.25.3,1.24.0" />
-        <div class="hint">逗号分隔多个 tag；留空或输入 all 同步全部</div>
+               placeholder="留空则同步源地址中的 tag；填 1.25.3,1.24.0 同步多个；填 all 同步全部" />
+        <div class="hint">留空 = 只同步地址里那个 tag；源地址不带 tag 时留空 = 同步全部</div>
       </div>
 
-      <button type="submit" id="submitBtn">触发同步</button>
+      <button type="submit" id="submitBtn">开始同步</button>
     </form>
 
     <div id="result"></div>
+
+    <div id="progress">
+      <div class="progress-head">
+        <span class="progress-title" id="progressTitle">同步进度</span>
+        <span class="badge queued" id="statusBadge">排队中</span>
+      </div>
+      <ol class="steps" id="stepList"></ol>
+      <a class="run-link" id="runLink" href="#" target="_blank" rel="noopener">在 GitHub Actions 中查看 →</a>
+    </div>
   </div>
 
   <script src="app.js"></script>

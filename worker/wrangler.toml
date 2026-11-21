@@ -3,9 +3,13 @@ main = "index.js"
 compatibility_date = "2024-09-01"
 
 # 部署后通过 wrangler 控制台或 Dashboard 设置以下环境变量（secrets）：
-#   GITHUB_REPO    = "owner/repo"
-#   WORKFLOW_ID    = "sync-images.yml"
-#   GITHUB_TOKEN   = "github_pat_xxxxx" (Fine-grained Token, 仅 Actions: Read & Write)
+#   GITHUB_REPO     = "owner/repo"
+#   WORKFLOW_ID     = "sync-images.yml"
+#   GITHUB_TOKEN    = "github_pat_xxxxx"（Fine-grained Token，需 Contents/Actions/Workflows 读写）
+#   ALLOWED_ORIGIN  = 可选，前端域名，如 "https://image-sync.pages.dev"（默认 *）
 
 [vars]
 # 非敏感变量可在此处定义（如有）
+
+# 本地调试：wrangler dev
+#   wrangler secret put GITHUB_REPO / WORKFLOW_ID / GITHUB_TOKEN

@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: '源镜像地址，如 docker.io/library/nginx:1.25.3 或 quay.io/prometheus/node-exporter:v1.7.0'
+        description: '源镜像地址（可带 tag），如 docker.io/library/nginx:1.25.3 或 quay.io/prometheus/node-exporter:v1.7.0'
         required: true
         type: string
       destination:
-        description: '目标镜像地址，如 swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3'
+        description: '目标镜像地址，如 swr.cn-east-4.myhuaweicloud.com/your-org/nginx:1.25.3'
         required: true
         type: string
       tags:
-        description: '逗号分隔的 tag 列表；留空或 all 表示同步全部 tag'
+        description: '可选：逗号分隔 tag 列表。留空时：源地址带 tag 则只同步该 tag，不带 tag 则同步全部 tag；填 all 强制同步全部 tag'
         required: false
         type: string
         default: ''
@@ -34,13 +34,11 @@ jobs:
           echo "Generating images.yaml..."
           echo "  Source:      $SOURCE"
           echo "  Destination: $DESTINATION"
-          echo "  Tags:        ${TAGS:-(all)}"
+          echo "  Tags:        ${TAGS:-(auto)}"
 
-          # Strip tag from source and destination (everything after the last ':')
-          # Handle the case where the source/destination may or may not contain a tag
+          # 去掉地址末尾的 tag（保留 registry 端口，如 registry:5000/org/img）
           strip_tag() {
             local addr="$1"
-            # If there's a '/' after the ':', it's a port, not a tag — keep the whole address
             if [[ "$addr" =~ ^([^:]+):([^:/]+)$ ]]; then
               echo "${BASH_REMATCH[1]}"
             else
@@ -48,16 +46,23 @@ jobs:
             fi
           }
 
+          # 提取地址中已有的 tag，没有则输出空串
+          extract_tag() {
+            local addr="$1"
+            if [[ "$addr" =~ ^[^:]+:([^:/]+)$ ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo ""
+            fi
+          }
+
           SOURCE_BASE=$(strip_tag "$SOURCE")
           DEST_BASE=$(strip_tag "$DESTINATION")
+          SOURCE_TAG=$(extract_tag "$SOURCE")
 
-          if [ -z "$TAGS" ] || [ "$TAGS" = "all" ]; then
-            # Sync all tags: source (without tag) -> destination (without tag)
-            echo "Mode: all tags"
-            printf '%s: %s\n' "$SOURCE_BASE" "$DEST_BASE" > images.yaml
-          else
-            # Sync specific tags
-            echo "Mode: specific tags"
+          if [ -n "$TAGS" ] && [ "$TAGS" != "all" ]; then
+            # 1) 显式指定 tag 列表
+            echo "Mode: explicit tags ($TAGS)"
             : > images.yaml
             IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
             for tag in "${TAG_ARRAY[@]}"; do
@@ -65,11 +70,30 @@ jobs:
               [ -z "$tag" ] && continue
               printf '%s:%s: %s:%s\n' "$SOURCE_BASE" "$tag" "$DEST_BASE" "$tag" >> images.yaml
             done
+          elif [ -n "$SOURCE_TAG" ]; then
+            # 2) 源地址自带 tag 且未指定 tags：只同步这个 tag（默认行为）
+            echo "Mode: single tag from source address ($SOURCE_TAG)"
+            printf '%s:%s: %s:%s\n' "$SOURCE_BASE" "$SOURCE_TAG" "$DEST_BASE" "$SOURCE_TAG" > images.yaml
+          else
+            # 3) 源地址不带 tag 且未指定 tags：同步全部 tag
+            echo "Mode: all tags"
+            printf '%s: %s\n' "$SOURCE_BASE" "$DEST_BASE" > images.yaml
           fi
 
           echo "--- Generated images.yaml ---"
           cat images.yaml
           echo "-----------------------------"
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### 同步规则"
+            echo '```yaml'
+            cat images.yaml 2>/dev/null || echo "(未生成)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run image-syncer
         uses: hhyasdf/image-sync-action@v1.1

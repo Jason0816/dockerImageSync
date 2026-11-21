@@ -62,13 +62,14 @@ repo/
 |---|---|---|---|
 | `source` | 是 | string | 源镜像地址，如 `docker.io/library/nginx:1.25.3` 或 `quay.io/prometheus/node-exporter:v1.7.0` |
 | `destination` | 是 | string | 目标镜像地址，如 `swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3` |
-| `tags` | 否 | string | 逗号分隔的 tag 列表；留空或 `all` 表示同步全部 tag |
+| `tags` | 否 | string | 逗号分隔的 tag 列表；留空时若源地址带 tag 则只同步该 tag（默认单 tag），源地址不带 tag 则同步全部；显式填 `all` 强制同步全部 |
 
 **Jobs 步骤**：
 1. `actions/checkout@v4` 检出仓库。
 2. 运行 shell 脚本，根据 inputs **动态生成 `images.yaml`**：
-   - 若 `tags` 为空或 `all`，规则写为 `"<source-without-tag>: <destination-without-tag>"`（源地址需去掉已有 tag，实现全 tag 同步）。
-   - 否则对每个 tag 生成一条 `<source>:<tag> → <destination>:<tag>` 规则。
+   - 若 `tags` 显式给出（非空且不为 `all`），对每个 tag 生成一条 `<source>:<tag> → <destination>:<tag>` 规则。
+   - 若 `tags` 为空且 `source` 自带 tag（如 `nginx:1.25.3`），只生成该单 tag 的同步规则（默认行为，避免误触发全量同步）。
+   - 若 `tags` 为空且 `source` 不带 tag，或 `tags=all`，规则写为 `"<source-without-tag>: <destination-without-tag>"`（全 tag 同步）。
 3. 调用 `hhyasdf/image-sync-action@v1.1`，传入 `auth_file: ./auth.yaml`、`images_file: ./images.yaml`、`proc: 6`。
 4. 在 `env` 中注入 Secrets：`SWR_USERNAME`、`SWR_PASSWORD`，以及可选的 Docker Hub / Quay 源端凭证。
 
@@ -98,7 +99,10 @@ quay.io:
 
 **接口**：`POST /api/sync`
 **请求体**：`{ "source": string, "destination": string, "tags": string }`
-**响应**：`200 { "ok": true }` / `400 { "error": string }` / `502 { "ok": false, "error": string }`
+**响应**：`200 { "ok": true, "run_id": number, "html_url": string }` / `400 { "error": string }` / `502 { "ok": false, "error": string }`
+
+**进度查询**：`GET /api/status?id=<run_id>`
+**响应**：`200 { "ok": true, "status": "queued|in_progress|completed", "conclusion": string, "html_url": string, "steps": [{ "name": string, "status": string, "conclusion": string }] }` / `400 / 404 / 502`
 
 **逻辑**：
 1. 仅接受 POST；其余返回 405。
@@ -109,9 +113,10 @@ quay.io:
    { "ref": "main", "inputs": { "source": "...", "destination": "...", "tags": "..." } }
    ```
    Header 必须含 `Authorization: Bearer <token>`、`Accept: application/vnd.github+json`、`X-GitHub-Api-Version: 2022-11-28`。
-5. 根据 GitHub 返回状态码映射响应，并设置 CORS 头 `Access-Control-Allow-Origin`（生产环境应限定为前端域名）。
+5. 根据 GitHub 返回状态码映射响应，并设置 CORS 头 `Access-Control-Allow-Origin`（生产环境应限定为前端域名，可用 `ALLOWED_ORIGIN` 环境变量配置）。
+6. dispatch 成功后轮询最近运行列表，定位本次触发的 `run_id` 与 `html_url` 返回给前端；`/api/status` 按 `run_id` 查询运行状态与步骤，供前端展示实时进度。
 
-**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`。
+**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`，可选 `ALLOWED_ORIGIN`。
 
 ### 5.4 前端：`web/index.html` + `web/app.js`
 
@@ -120,8 +125,9 @@ quay.io:
 **行为**：
 1. 提交时阻止默认表单行为，校验两个必填输入框非空。
 2. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({...}) })`。
-3. 根据响应显示“已触发同步，请前往 Actions 页面查看”或错误信息。
-4. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
+3. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
+4. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
+5. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
 
 **约束**：前端代码中**不得出现任何 GitHub Token 或 SWR 凭证**。
 
@@ -155,9 +161,10 @@ quay.io:
 - [ ] 从前端页面提交同样参数，Actions 页面出现一次新的 workflow run，且最终同步成功。
 - [ ] 传入不存在的源镜像时，workflow 失败并在日志中给出明确错误，前端收到“已触发”响应（触发成功与同步成败解耦）。
 - [ ] 前端源码与 Worker 源码中不包含任何 SWR AK/SK 或 GitHub Token 明文。
-- [ ] `tags` 留空时，workflow 生成的 `images.yaml` 为全 tag 同步规则（源地址不含 tag）。
+- [ ] `tags` 留空且源地址带 tag 时，workflow 只同步该 tag；源地址不带 tag 时，生成全 tag 同步规则（源地址不含 tag）。
 - [ ] 重复触发同一镜像，`image-syncer` 日志显示 skipped 而非重复传输（增量同步生效）。
 - [ ] 前端输入非 `swr.` 域名的目标地址时，代理返回 400 并提示“目标仓库仅支持华为云 SWR”。
+- [ ] 前端触发后可实时看到运行状态与步骤进度，完成后展示“同步成功/失败”结果。
 
 ## 9. 注意事项（实现时必须遵守）
 
