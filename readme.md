@@ -128,12 +128,12 @@ quay.io:
 
 ### 5.4 前端：`web/index.html` + `web/app.js`
 
-**页面元素**：源镜像输入框、目标组织输入框（默认 `ascend-sync`）、目标路径实时预览、提交按钮、进度面板、结果提示区。
+**页面元素**：源镜像输入框、目标组织输入框（默认 `ascend-sync`）、目标架构下拉框（`amd64` / `arm64` / `all`，默认 `amd64`）、目标路径实时预览、提交按钮、进度面板、最近同步列表、结果提示区。
 
 **行为**：
 1. 提交时阻止默认表单行为，校验源镜像地址非空且可解析。
 2. 前端按与 Worker 相同的规则在本地预览目标路径（`GET /api/config` 获取 registry 与默认组织），用户无需填写目标地址。
-3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org }) })`。
+3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org, arch }) })`。
 4. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
 5. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
 6. 进度与最近记录持久化在 `localStorage`：刷新页面后自动恢复上次同步状态（若仍未结束会继续轮询），并展示最近 10 条同步记录（含结果与日志链接），可一键清空。

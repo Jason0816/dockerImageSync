@@ -22,6 +22,8 @@ const GITHUB_API = 'https://api.github.com';
 const DEFAULT_REGISTRY = 'swr.cn-east-4.myhuaweicloud.com';
 const DEFAULT_ORG = 'ascend-sync';
 const DEFAULT_TAG = 'latest';
+const DEFAULT_ARCH = 'amd64';
+const ALLOWED_ARCHS = new Set(['amd64', 'arm64', 'all']);
 
 function corsHeaders(env) {
   const origin = (env && env.ALLOWED_ORIGIN) ? env.ALLOWED_ORIGIN : '*';
@@ -131,11 +133,20 @@ function buildDestination(env, source, orgRaw) {
   };
 }
 
+function normalizeArch(arch) {
+  const value = (arch && String(arch).trim().toLowerCase()) || DEFAULT_ARCH;
+  if (!ALLOWED_ARCHS.has(value)) {
+    throw new Error('不支持的架构，可选：amd64 / arm64 / all');
+  }
+  return value;
+}
+
 async function handleConfig(env) {
   return jsonResponse(env, {
     ok: true,
     registry: registryOf(env),
     default_org: (env.SWR_ORG || DEFAULT_ORG).trim(),
+    default_arch: DEFAULT_ARCH,
   });
 }
 
@@ -150,13 +161,20 @@ async function handleSync(request, env) {
     return jsonResponse(env, { error: 'Invalid JSON body' }, 400);
   }
 
-  const { source, destination, tags, org } = body || {};
+  const { source, destination, tags, org, arch } = body || {};
 
   if (!source || typeof source !== 'string' || !source.trim()) {
     return jsonResponse(env, { error: 'source 不能为空' }, 400);
   }
   if (!env.GITHUB_REPO || !env.WORKFLOW_ID || !env.GITHUB_TOKEN) {
     return jsonResponse(env, { error: 'Server misconfiguration' }, 500);
+  }
+
+  let archValue;
+  try {
+    archValue = normalizeArch(arch);
+  } catch (err) {
+    return jsonResponse(env, { error: err.message }, 400);
   }
 
   let target;
@@ -188,6 +206,7 @@ async function handleSync(request, env) {
           source: target.source,
           destination: target.destination,
           tags: (tags || '').trim(),
+          arch: archValue,
         },
       }),
     });
@@ -224,6 +243,7 @@ async function handleSync(request, env) {
             run_id: run.id,
             html_url: run.html_url,
             destination: target.destination,
+            arch: archValue,
           });
         }
       }
@@ -233,7 +253,7 @@ async function handleSync(request, env) {
     await sleep(1500);
   }
 
-  return jsonResponse(env, { ok: true, destination: target.destination });
+  return jsonResponse(env, { ok: true, destination: target.destination, arch: archValue });
 }
 
 /**

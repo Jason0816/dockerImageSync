@@ -53,7 +53,7 @@
       letter-spacing: 0.05em;
     }
 
-    input {
+    input, select {
       width: 100%;
       padding: 0.7rem 0.9rem;
       background: rgba(15, 23, 42, 0.7);
@@ -64,6 +64,18 @@
       transition: border-color 0.2s, box-shadow 0.2s;
       outline: none;
     }
+
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.9rem center;
+      padding-right: 2.2rem;
+      cursor: pointer;
+    }
+
+    select option { background: #1e293b; color: #e2e8f0; }
 
     input::placeholder { color: #475569; }
     input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15); }
@@ -248,6 +260,16 @@
         <label for="org">目标组织</label>
         <input type="text" id="org" name="org" value="ascend-sync" placeholder="ascend-sync" />
         <div class="hint">SWR 组织名，默认 ascend-sync，可按需修改</div>
+      </div>
+
+      <div class="form-group">
+        <label for="arch">目标架构</label>
+        <select id="arch" name="arch">
+          <option value="amd64" selected>amd64（x86_64，常见服务器）</option>
+          <option value="arm64">arm64（鲲鹏 / 昇腾等 ARM 服务器）</option>
+          <option value="all">all（全部平台，体积大、耗时较长）</option>
+        </select>
+        <div class="hint">必须与目标机器架构一致，否则启动会报 exec format error</div>
       </div>
 
       <div class="preview" id="preview">

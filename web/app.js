@@ -27,6 +27,7 @@ const LAST_RUN_TTL_MS = 24 * 60 * 60 * 1000;
 const form = document.getElementById('syncForm');
 const sourceInput = document.getElementById('source');
 const orgInput = document.getElementById('org');
+const archSelect = document.getElementById('arch');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
 const previewTarget = document.getElementById('previewTarget');
@@ -209,7 +210,8 @@ function renderHistory() {
 
     const meta = document.createElement('span');
     meta.className = 'h-time';
-    meta.textContent = `${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`;
+    const archLabel = entry.arch ? `${entry.arch} · ` : '';
+    meta.textContent = `${archLabel}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`;
 
     li.append(icon, dest, meta);
 
@@ -242,6 +244,7 @@ async function loadConfig() {
       scrollInfo.registry = data.registry || FALLBACK_REGISTRY;
       scrollInfo.defaultOrg = data.default_org || FALLBACK_ORG;
       if (!orgInput.value.trim()) orgInput.value = scrollInfo.defaultOrg;
+      if (data.default_arch && archSelect) archSelect.value = data.default_arch;
       renderPreview();
     }
   } catch (err) {
@@ -400,6 +403,7 @@ form.addEventListener('submit', async (e) => {
 
   const source = sourceInput.value.trim();
   const org = orgInput.value.trim();
+  const arch = archSelect.value || 'amd64';
 
   if (!source) {
     showResult('error', '请输入源镜像地址');
@@ -421,7 +425,7 @@ form.addEventListener('submit', async (e) => {
     const response = await fetch(`${PROXY_URL}/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source, org }),
+      body: JSON.stringify({ source, org, arch }),
     });
 
     const data = await response.json();
@@ -432,6 +436,7 @@ form.addEventListener('submit', async (e) => {
         const record = {
           runId: data.run_id,
           source,
+          arch,
           destination: data.destination || '',
           startedAt: Date.now(),
           htmlUrl: data.html_url || '',
