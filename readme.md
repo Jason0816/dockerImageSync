@@ -133,7 +133,8 @@ quay.io:
 3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org }) })`。
 4. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
 5. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
-6. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
+6. 进度与最近记录持久化在 `localStorage`：刷新页面后自动恢复上次同步状态（若仍未结束会继续轮询），并展示最近 10 条同步记录（含结果与日志链接），可一键清空。
+7. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
 
 **约束**：前端代码中**不得出现任何 GitHub Token 或 SWR 凭证**。
 

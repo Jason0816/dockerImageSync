@@ -2,14 +2,10 @@
  * 前端逻辑 — 容器镜像同步
  *
  * 只需填源镜像地址：目标路径由 Worker 按 SWR_REGISTRY + 组织自动推导。
+ * 进度会持久化到 localStorage：刷新页面后自动恢复上次同步状态，并保留最近记录。
  * 注意：此处不得出现任何 GitHub Token 或 SWR 凭证。
  */
 
-// ============================================================
-// 配置：默认同源（由 local/server.mjs 提供服务时无需配置）
-// 部署到独立静态站点时，在 index.html 里前置设置：
-//   <script>window.PROXY_URL = 'https://your-worker.workers.dev';</script>
-// ============================================================
 const IS_FILE_PROTOCOL = location.protocol === 'file:';
 const PROXY_URL = (typeof window.PROXY_URL === 'string' ? window.PROXY_URL : '').replace(/\/$/, '');
 const OPEN_HINT = '请通过服务地址打开页面（如 http://192.168.148.4:8787），不要直接双击本地 html 文件';
@@ -18,9 +14,14 @@ const POLL_INTERVAL_MS = 8000;
 const POLL_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_TAG = 'latest';
 
-// 与 Worker 保持一致的后备默认值（Worker 不可达时用于展示预览）
+// Worker 不可达时用于展示预览
 const FALLBACK_REGISTRY = 'swr.cn-east-4.myhuaweicloud.com';
 const FALLBACK_ORG = 'ascend-sync';
+
+const LAST_RUN_KEY = 'imageSync.lastRun.v1';
+const HISTORY_KEY = 'imageSync.history.v1';
+const HISTORY_LIMIT = 10;
+const LAST_RUN_TTL_MS = 24 * 60 * 60 * 1000;
 
 // DOM
 const form = document.getElementById('syncForm');
@@ -34,10 +35,66 @@ const statusBadge = document.getElementById('statusBadge');
 const stepList = document.getElementById('stepList');
 const runLink = document.getElementById('runLink');
 const progressTitle = document.getElementById('progressTitle');
+const historySection = document.getElementById('history');
+const historyList = document.getElementById('historyList');
+const clearHistoryBtn = document.getElementById('clearHistory');
 
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
 let pollStartedAt = 0;
+
+/* ---------------- 本地持久化 ---------------- */
+
+function readJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJSON(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* 忽略配额/隐私模式异常 */
+  }
+}
+
+function loadLastRun() {
+  const v = readJSON(LAST_RUN_KEY, null);
+  if (!v || !v.runId) return null;
+  if (!v.startedAt || Date.now() - v.startedAt > LAST_RUN_TTL_MS) {
+    try { localStorage.removeItem(LAST_RUN_KEY); } catch { /* ignore */ }
+    return null;
+  }
+  return v;
+}
+
+function saveLastRun(v) {
+  writeJSON(LAST_RUN_KEY, v);
+}
+
+function loadHistory() {
+  const v = readJSON(HISTORY_KEY, []);
+  return Array.isArray(v) ? v : [];
+}
+
+function saveHistory(list) {
+  writeJSON(HISTORY_KEY, list.slice(0, HISTORY_LIMIT));
+}
+
+function upsertHistory(entry) {
+  const list = loadHistory();
+  const idx = list.findIndex((e) => e.runId === entry.runId);
+  if (idx === -1) list.unshift(entry);
+  else list[idx] = { ...list[idx], ...entry };
+  saveHistory(list);
+  renderHistory();
+}
+
+/* ---------------- 渲染 ---------------- */
 
 function showResult(type, message) {
   resultDiv.className = type;
@@ -49,9 +106,6 @@ function setBadge(kind, text) {
   statusBadge.textContent = text;
 }
 
-/**
- * 解析镜像地址，返回 { repo, tag }（与 Worker 的 parseImage 一致）
- */
 function parseImage(source) {
   let s = String(source || '').trim();
   if (!s) return null;
@@ -80,28 +134,6 @@ function renderPreview() {
   previewTarget.textContent = `${scrollInfo.registry}/${org}/${parsed.repo}:${tag}`;
 }
 
-async function loadConfig() {
-  if (IS_FILE_PROTOCOL) {
-    renderPreview();
-    showResult('error', `❌ 当前是本地文件方式打开，无法调用同步服务。${OPEN_HINT}`);
-    return;
-  }
-  try {
-    const resp = await fetch(`${PROXY_URL}/api/config`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    if (data && data.ok) {
-      scrollInfo.registry = data.registry || FALLBACK_REGISTRY;
-      scrollInfo.defaultOrg = data.default_org || FALLBACK_ORG;
-      if (!orgInput.value.trim()) orgInput.value = scrollInfo.defaultOrg;
-      renderPreview();
-    }
-  } catch (err) {
-    renderPreview();
-    showResult('error', `❌ 无法连接同步服务（${PROXY_URL || location.origin}）：${err.message}`);
-  }
-}
-
 const STEP_ICONS = {
   success: '✅',
   failure: '❌',
@@ -109,6 +141,13 @@ const STEP_ICONS = {
   skipped: '⏭️',
   in_progress: '🔄',
   queued: '⏳',
+};
+
+const HISTORY_ICONS = {
+  success: '✅',
+  failure: '❌',
+  cancelled: '⚪',
+  skipped: '⏭️',
 };
 
 function renderSteps(steps) {
@@ -129,6 +168,86 @@ function renderSteps(steps) {
     li.append(icon, name);
     stepList.appendChild(li);
   });
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  try {
+    return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    return '';
+  }
+}
+
+function statusWord(conclusion) {
+  if (conclusion === 'success') return '成功';
+  if (conclusion === 'failure') return '失败';
+  if (conclusion === 'cancelled') return '已取消';
+  if (conclusion === 'skipped') return '已跳过';
+  return '进行中';
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  if (!list.length) {
+    historySection.style.display = 'none';
+    return;
+  }
+  historySection.style.display = 'block';
+  historyList.innerHTML = '';
+
+  list.forEach((entry) => {
+    const li = document.createElement('li');
+    if (entry.conclusion) li.className = entry.conclusion;
+
+    const icon = document.createElement('span');
+    icon.textContent = HISTORY_ICONS[entry.conclusion] || '🔄';
+
+    const dest = document.createElement('span');
+    dest.className = 'h-dest';
+    dest.textContent = entry.destination || entry.source || '未知镜像';
+
+    const meta = document.createElement('span');
+    meta.className = 'h-time';
+    meta.textContent = `${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`;
+
+    li.append(icon, dest, meta);
+
+    if (entry.htmlUrl) {
+      const a = document.createElement('a');
+      a.href = entry.htmlUrl;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = '日志';
+      li.appendChild(a);
+    }
+
+    historyList.appendChild(li);
+  });
+}
+
+/* ---------------- 配置 / 进度 ---------------- */
+
+async function loadConfig() {
+  if (IS_FILE_PROTOCOL) {
+    renderPreview();
+    showResult('error', `❌ 当前是本地文件方式打开，无法调用同步服务。${OPEN_HINT}`);
+    return;
+  }
+  try {
+    const resp = await fetch(`${PROXY_URL}/api/config`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data && data.ok) {
+      scrollInfo.registry = data.registry || FALLBACK_REGISTRY;
+      scrollInfo.defaultOrg = data.default_org || FALLBACK_ORG;
+      if (!orgInput.value.trim()) orgInput.value = scrollInfo.defaultOrg;
+      renderPreview();
+    }
+  } catch (err) {
+    renderPreview();
+    showResult('error', `❌ 无法连接同步服务（${PROXY_URL || location.origin}）：${err.message}`);
+  }
 }
 
 function stopPolling() {
@@ -161,6 +280,14 @@ async function pollStatus(runId, htmlUrl, destination) {
     const resp = await fetch(`${PROXY_URL}/api/status?id=${encodeURIComponent(runId)}`);
     const data = await resp.json();
 
+    if (resp.status === 404) {
+      // 运行已不存在（被清理）：清除本地记录
+      stopPolling();
+      try { localStorage.removeItem(LAST_RUN_KEY); } catch { /* ignore */ }
+      progressDiv.classList.remove('visible');
+      showResult('error', '找不到这次运行记录（可能已被 GitHub 清理），请重新触发同步。');
+      return;
+    }
     if (!resp.ok || !data.ok) {
       throw new Error(data.error || `HTTP ${resp.status}`);
     }
@@ -181,6 +308,19 @@ async function pollStatus(runId, htmlUrl, destination) {
       stopPolling();
       submitBtn.disabled = false;
       submitBtn.textContent = '开始同步';
+
+      upsertHistory({
+        runId,
+        destination,
+        htmlUrl: data.html_url || htmlUrl,
+        conclusion: data.conclusion,
+        finishedAt: Date.now(),
+      });
+      const savedRun = loadLastRun();
+      if (savedRun && savedRun.runId === runId) {
+        saveLastRun({ ...savedRun, conclusion: data.conclusion, htmlUrl: data.html_url || htmlUrl });
+      }
+
       if (data.conclusion === 'success') {
         showResult('success', `✅ 同步完成！已推送到 ${destination || 'SWR'}，可在 SWR 控制台查看。`);
       } else if (data.conclusion === 'cancelled') {
@@ -212,8 +352,42 @@ function startTracking(runId, htmlUrl, destination) {
   pollStatus(runId, htmlUrl, destination);
 }
 
+/** 刷新后恢复上次同步的进度 */
+async function restoreLastRun() {
+  const last = loadLastRun();
+  if (!last) return;
+
+  progressDiv.classList.add('visible');
+  stepList.innerHTML = '';
+  setBadge('queued', '查询中…');
+  progressTitle.textContent = '上次同步';
+  if (last.htmlUrl) {
+    runLink.href = last.htmlUrl;
+    runLink.style.display = 'inline-block';
+  }
+  if (last.destination) {
+    showResult('loading', `上次同步：${last.destination}`);
+  }
+
+  pollStartedAt = Date.now();
+  pollStatus(last.runId, last.htmlUrl, last.destination);
+}
+
+/* ---------------- 事件 ---------------- */
+
 sourceInput.addEventListener('input', renderPreview);
 orgInput.addEventListener('input', renderPreview);
+
+clearHistoryBtn.addEventListener('click', () => {
+  stopPolling();
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+    localStorage.removeItem(LAST_RUN_KEY);
+  } catch { /* ignore */ }
+  renderHistory();
+  progressDiv.classList.remove('visible');
+  showResult('success', '已清空本地同步记录。');
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -253,7 +427,18 @@ form.addEventListener('submit', async (e) => {
     const data = await response.json();
 
     if (response.ok && data.ok) {
+      progressDiv.classList.add('visible');
       if (data.run_id) {
+        const record = {
+          runId: data.run_id,
+          source,
+          destination: data.destination || '',
+          startedAt: Date.now(),
+          htmlUrl: data.html_url || '',
+          conclusion: null,
+        };
+        saveLastRun(record);
+        upsertHistory(record);
         startTracking(data.run_id, data.html_url, data.destination);
         return;
       }
@@ -274,4 +459,8 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
+/* ---------------- 初始化 ---------------- */
+
+renderHistory();
 loadConfig();
+restoreLastRun();

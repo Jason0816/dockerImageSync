@@ -179,6 +179,56 @@
     }
 
     .run-link:hover { color: #bae6fd; }
+
+    /* 最近同步 */
+    .history {
+      margin-top: 1.5rem;
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      padding-top: 1.1rem;
+    }
+
+    .history-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 0.6rem;
+    }
+
+    .link-btn {
+      background: none;
+      border: none;
+      color: #64748b;
+      font-size: 0.75rem;
+      cursor: pointer;
+      padding: 0;
+      width: auto;
+      margin: 0;
+    }
+
+    .link-btn:hover { color: #94a3b8; }
+
+    .history-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .history-list li {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.78rem;
+      padding: 0.45rem 0.55rem;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.35);
+      color: #94a3b8;
+    }
+
+    .history-list li .h-dest { flex: 1; word-break: break-all; color: #cbd5e1; }
+    .history-list li .h-time { color: #64748b; white-space: nowrap; font-size: 0.72rem; }
+    .history-list li a { color: #7dd3fc; text-decoration: none; white-space: nowrap; }
+    .history-list li a:hover { text-decoration: underline; }
+    .history-list li.success .h-dest { color: #86efac; }
+    .history-list li.failure .h-dest { color: #fca5a5; }
   </style>
 </head>
 <body>
@@ -216,6 +266,14 @@
       </div>
       <ol class="steps" id="stepList"></ol>
       <a class="run-link" id="runLink" href="#" target="_blank" rel="noopener">在 GitHub Actions 中查看 →</a>
+    </div>
+
+    <div id="history" class="history" style="display: none;">
+      <div class="history-head">
+        <span>最近同步</span>
+        <button type="button" id="clearHistory" class="link-btn">清空记录</button>
+      </div>
+      <ul class="history-list" id="historyList"></ul>
     </div>
   </div>
 
