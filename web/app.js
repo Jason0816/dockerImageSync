@@ -255,6 +255,18 @@ function statusWord(conclusion) {
 let historyMode = 'local'; // 'global' 读 GitHub 运行记录；'local' 回退到本地缓存
 let globalRuns = [];
 
+/** 按路径分隔符插入换行机会，避免把仓库名从中间劈开 */
+function appendWrapped(el, text) {
+  const parts = String(text || '').split('/');
+  parts.forEach((part, index) => {
+    if (part) el.appendChild(document.createTextNode(part));
+    if (index < parts.length - 1) {
+      el.appendChild(document.createTextNode('/'));
+      el.appendChild(document.createElement('wbr'));
+    }
+  });
+}
+
 function buildHistoryItem({ icon, source, destination, text, meta, url, copyText }) {
   const li = document.createElement('li');
   li.className = 'hist-item';
@@ -271,7 +283,7 @@ function buildHistoryItem({ icon, source, destination, text, meta, url, copyText
   if (source && destination) {
     const src = document.createElement('div');
     src.className = 'hist-src';
-    src.textContent = source;
+    appendWrapped(src, source);
 
     const arrow = document.createElement('div');
     arrow.className = 'hist-arrow';
@@ -279,7 +291,7 @@ function buildHistoryItem({ icon, source, destination, text, meta, url, copyText
 
     const dst = document.createElement('div');
     dst.className = 'hist-dst';
-    dst.textContent = destination;
+    appendWrapped(dst, destination);
 
     title.append(src, arrow, dst);
     title.title = `${source} → ${destination}`;
