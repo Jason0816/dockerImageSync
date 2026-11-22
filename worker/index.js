@@ -240,6 +240,15 @@ function normalizeArch(arch) {
   return value;
 }
 
+/** 是否把镜像设为公开，默认 true */
+function normalizePublic(value) {
+  if (value === undefined || value === null || value === '') return true;
+  if (typeof value === 'boolean') return value;
+  const text = String(value).trim().toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(text)) return false;
+  return true;
+}
+
 async function handleConfig(env) {
   return jsonResponse(env, {
     ok: true,
@@ -261,6 +270,7 @@ async function handleSync(request, env) {
   }
 
   const { source, destination, tags, org, arch } = body || {};
+  const publicValue = normalizePublic(body && body.public);
 
   if (!source || typeof source !== 'string' || !source.trim()) {
     return jsonResponse(env, { error: 'source 不能为空' }, 400);
@@ -306,6 +316,7 @@ async function handleSync(request, env) {
           destination: target.destination,
           tags: (tags || '').trim(),
           arch: archValue,
+          public: String(publicValue),
         },
       }),
     });

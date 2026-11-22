@@ -77,6 +77,7 @@
       --badge-queued-bg: rgba(148, 163, 184, 0.18);
       --badge-queued-fg: #cbd5e1;
       --scroll-thumb: rgba(100, 116, 139, 0.4);
+      --track-bg: rgba(148, 163, 184, 0.24);
 
       --switch-bg: rgba(15, 23, 42, 0.72);
       --switch-active-bg: rgba(56, 189, 248, 0.2);
@@ -140,6 +141,7 @@
       --badge-queued-bg: rgba(100, 116, 139, 0.14);
       --badge-queued-fg: #475569;
       --scroll-thumb: rgba(100, 116, 139, 0.35);
+      --track-bg: rgba(100, 116, 139, 0.22);
 
       --switch-bg: rgba(255, 255, 255, 0.88);
       --switch-active-bg: rgba(2, 132, 199, 0.14);
@@ -314,6 +316,79 @@
       border-color: var(--accent-soft-border);
       background: var(--accent-soft-bg);
     }
+
+    /* 公开镜像开关 */
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.7rem 0.85rem;
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+      background: var(--input-bg);
+    }
+
+    .switch-text { min-width: 0; }
+
+    .switch-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .switch-row .hint { margin-top: 0.25rem; }
+
+    .switch {
+      position: relative;
+      flex: none;
+      width: 44px;
+      height: 24px;
+      cursor: pointer;
+    }
+
+    .switch input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      padding: 0;
+      border: 0;
+    }
+
+    .switch .track {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: var(--track-bg);
+      border: 1px solid var(--input-border);
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .switch .track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3);
+      transition: transform 0.2s;
+    }
+
+    .switch input:checked + .track {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .switch input:checked + .track::after { transform: translateX(20px); }
+
+    .switch input:focus-visible + .track { box-shadow: 0 0 0 3px var(--accent-soft-bg); }
 
     button {
       width: 100%;
@@ -833,6 +908,19 @@
             <option value="all">all（全部平台，体积大、耗时较长）</option>
           </select>
           <div class="hint">必须与目标机器架构一致，否则启动会报 exec format error</div>
+        </div>
+
+        <div class="form-group">
+          <div class="switch-row">
+            <div class="switch-text">
+              <div class="switch-title">公开镜像</div>
+              <div class="hint">开启后同步完成会自动设为公开，任何人可匿名拉取；关闭则保持私有</div>
+            </div>
+            <label class="switch" title="切换公开 / 私有">
+              <input type="checkbox" id="isPublic" checked />
+              <span class="track"></span>
+            </label>
+          </div>
         </div>
 
         <div class="preview" id="preview">

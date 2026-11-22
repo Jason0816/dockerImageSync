@@ -40,6 +40,7 @@ const orgInput = document.getElementById('org');
 const orgLockBtn = document.getElementById('orgLock');
 const orgHint = document.getElementById('orgHint');
 const archSelect = document.getElementById('arch');
+const isPublicInput = document.getElementById('isPublic');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
 const previewTarget = document.getElementById('previewTarget');
@@ -851,6 +852,7 @@ form.addEventListener('submit', async (e) => {
   const source = sourceInput.value.trim();
   const org = orgInput.value.trim();
   const arch = archSelect.value || 'amd64';
+  const makePublic = isPublicInput ? isPublicInput.checked : true;
 
   if (!source) {
     showResult('error', '请输入源镜像地址');
@@ -872,7 +874,7 @@ form.addEventListener('submit', async (e) => {
     const response = await apiFetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source, org, arch }),
+      body: JSON.stringify({ source, org, arch, public: makePublic }),
     });
 
     if (response.status === 401) {

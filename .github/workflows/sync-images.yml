@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: 'amd64'
+      public:
+        description: '同步完成后是否把镜像设为公开：true / false（默认 true）'
+        required: false
+        type: string
+        default: 'true'
 
 jobs:
   sync:
@@ -140,7 +145,7 @@ jobs:
           ./image-syncer "${ARGS[@]}"
 
       - name: Set SWR repositories public
-        if: success()
+        if: success() && github.event.inputs.public != 'false'
         shell: bash
         continue-on-error: true
         env:
