@@ -1,5 +1,11 @@
 # dockerImageSync
 
+[![Sync Container Images](https://github.com/Jason0816/dockerImageSync/actions/workflows/sync-images.yml/badge.svg)](https://github.com/Jason0816/dockerImageSync/actions/workflows/sync-images.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![Huawei Cloud SWR](https://img.shields.io/badge/Huawei%20Cloud-SWR-C7000A)](https://www.huaweicloud.com/product/swr.html)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+
 把 Docker Hub / quay.io 的镜像同步到**华为云 SWR** 的一站式小工具：填一个镜像地址，自动触发 GitHub Actions 完成拉取与推送，页面上实时看进度。
 
 - **零常驻服务器**：执行在 GitHub Actions，前端 + 代理跑在 Cloudflare Workers 免费额度内
@@ -11,9 +17,18 @@
 
 ---
 
+## 界面预览
+
+![界面预览（亮色主题）](docs/preview-light.png)
+
+> 暗色 / 跟随系统主题的布局一致，仅配色不同。左侧为全局同步历史（支持搜索、日期分组、复制），右侧为新建同步表单。
+
+---
+
 ## 目录
 
 - [功能一览](#功能一览)
+- [界面预览](#界面预览)
 - [工作原理](#工作原理)
 - [快速开始（使用者）](#快速开始使用者)
 - [自部署（开发者）](#自部署开发者)
@@ -343,4 +358,4 @@ Token 缺少 `Contents` 或 `Workflows` 权限；修改 fine-grained token 权�
 
 ## License
 
-未指定，默认保留所有权利。如需开源请补充 LICENSE。
+[MIT](LICENSE) © 2026 Jason0816
