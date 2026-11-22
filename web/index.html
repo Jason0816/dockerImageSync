@@ -487,20 +487,21 @@
       min-height: 110px;
       margin-top: 0.5rem;
       flex-direction: column;
-      gap: 0.4rem;
+      gap: 0.5rem;
       align-items: center;
       justify-content: center;
       text-align: center;
       font-size: 0.7rem;
       line-height: 1.7;
-      color: var(--faint);
+      color: var(--dim);
       padding: 0.8rem;
     }
 
     .history-hint .hint-icon {
-      font-size: 1.3rem;
+      width: 24px;
+      height: 24px;
+      color: var(--muted);
       opacity: 0.55;
-      filter: grayscale(0.35);
     }
 
     .history-hint.visible { display: flex; }
@@ -711,7 +712,12 @@
       <ul class="history-list" id="historyList"></ul>
       <div class="history-empty" id="historyEmpty">暂无同步记录</div>
       <div class="history-hint" id="historyHint">
-        <span class="hint-icon">📦</span>
+        <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z" />
+          <path d="M3 7.5 12 12l9-4.5" />
+          <path d="M12 12v9" />
+        </svg>
         <span>同步新的镜像后<br />记录会自动出现在这里</span>
       </div>
 
