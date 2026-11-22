@@ -40,6 +40,7 @@ const archSelect = document.getElementById('arch');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
 const previewTarget = document.getElementById('previewTarget');
+const copyBtn = document.getElementById('copyBtn');
 const progressDiv = document.getElementById('progress');
 const statusBadge = document.getElementById('statusBadge');
 const stepList = document.getElementById('stepList');
@@ -445,6 +446,68 @@ async function restoreLastRun() {
 
 sourceInput.addEventListener('input', renderPreview);
 orgInput.addEventListener('input', renderPreview);
+
+/* ---------------- 复制镜像地址 ---------------- */
+
+let copyResetTimer = null;
+
+function currentTargetText() {
+  const text = (previewTarget.textContent || '').trim();
+  // 还没有生成真实地址时（占位文案）不复制
+  return text.startsWith('填写') ? '' : text;
+}
+
+async function writeClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  // 非安全上下文（http）回退方案
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-1000px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+if (copyBtn) {
+  copyBtn.addEventListener('click', async () => {
+    const text = currentTargetText();
+    if (!text) {
+      showResult('error', '请先填写源镜像地址');
+      sourceInput.focus();
+      return;
+    }
+
+    try {
+      const ok = await writeClipboard(text);
+      if (!ok) {
+        showResult('error', `复制失败，请手动选中复制：${text}`);
+        return;
+      }
+      copyBtn.textContent = '已复制 ✓';
+      copyBtn.classList.add('copied');
+      if (copyResetTimer) clearTimeout(copyResetTimer);
+      copyResetTimer = setTimeout(() => {
+        copyBtn.textContent = '复制';
+        copyBtn.classList.remove('copied');
+      }, 1500);
+    } catch (err) {
+      showResult('error', `复制失败：${err.message}`);
+    }
+  });
+}
 
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
