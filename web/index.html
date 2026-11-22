@@ -187,7 +187,7 @@
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
-      flex: 1;
+      flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
       margin: -0.15rem -0.3rem 0;
@@ -195,6 +195,50 @@
       scrollbar-width: thin;
       scrollbar-color: rgba(100, 116, 139, 0.4) transparent;
     }
+
+    .history-search {
+      width: 100%;
+      margin-bottom: 0.55rem;
+      padding: 0.45rem 0.6rem;
+      font-size: 0.74rem;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 7px;
+      color: #e2e8f0;
+    }
+
+    .history-search::placeholder { color: #475569; }
+
+    .history-search:focus {
+      border-color: rgba(56, 189, 248, 0.5);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.1);
+    }
+
+    .hist-day {
+      font-size: 0.63rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: #5b6b82;
+      padding: 0.35rem 0.2rem 0.05rem;
+    }
+
+    .history-hint {
+      display: none;
+      flex: 1 1 auto;
+      min-height: 110px;
+      margin-top: 0.5rem;
+      border: 1px dashed rgba(148, 163, 184, 0.16);
+      border-radius: 10px;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 0.7rem;
+      line-height: 1.7;
+      color: #46566e;
+      padding: 0.8rem;
+    }
+
+    .history-hint.visible { display: flex; }
 
     .history-list::-webkit-scrollbar { width: 6px; }
     .history-list::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.4); border-radius: 3px; }
@@ -216,15 +260,14 @@
     .hist-body { min-width: 0; flex: 1; }
 
     .hist-title {
-      font-size: 0.76rem;
-      line-height: 1.35;
-      color: #cbd5e1;
+      font-size: 0.74rem;
+      line-height: 1.4;
       word-break: break-all;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
     }
+
+    .hist-src { color: #cbd5e1; }
+    .hist-dst { color: #7dd3fc; }
+    .hist-arrow { color: #475569; font-size: 0.66rem; line-height: 1.25; margin: 0.08rem 0; }
 
     .hist-meta {
       margin-top: 0.2rem;
@@ -492,8 +535,12 @@
         <button type="button" id="refreshHistory" class="link-btn">刷新</button>
       </div>
 
+      <input type="search" id="historySearch" class="history-search"
+             placeholder="搜索镜像 / 组织 / 状态" autocomplete="off" />
+
       <ul class="history-list" id="historyList"></ul>
-      <div class="history-empty" id="historyEmpty">暂无同步记录<br />同步一次后会出现在这里</div>
+      <div class="history-empty" id="historyEmpty">暂无同步记录</div>
+      <div class="history-hint" id="historyHint">同步新的镜像后<br />记录会自动出现在这里</div>
 
       <div class="sidebar-foot">记录来自 GitHub Actions，所有人共享</div>
     </aside>

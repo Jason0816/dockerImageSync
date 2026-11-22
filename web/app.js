@@ -48,6 +48,8 @@ const runLink = document.getElementById('runLink');
 const progressTitle = document.getElementById('progressTitle');
 const historyList = document.getElementById('historyList');
 const historyEmpty = document.getElementById('historyEmpty');
+const historyHint = document.getElementById('historyHint');
+const historySearch = document.getElementById('historySearch');
 const refreshHistoryBtn = document.getElementById('refreshHistory');
 
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
@@ -253,7 +255,7 @@ function statusWord(conclusion) {
 let historyMode = 'local'; // 'global' 读 GitHub 运行记录；'local' 回退到本地缓存
 let globalRuns = [];
 
-function buildHistoryItem({ icon, text, meta, url, copyText }) {
+function buildHistoryItem({ icon, source, destination, text, meta, url, copyText }) {
   const li = document.createElement('li');
   li.className = 'hist-item';
 
@@ -266,8 +268,25 @@ function buildHistoryItem({ icon, text, meta, url, copyText }) {
 
   const title = document.createElement('div');
   title.className = 'hist-title';
-  title.textContent = text;
-  title.title = text;
+  if (source && destination) {
+    const src = document.createElement('div');
+    src.className = 'hist-src';
+    src.textContent = source;
+
+    const arrow = document.createElement('div');
+    arrow.className = 'hist-arrow';
+    arrow.textContent = '↓';
+
+    const dst = document.createElement('div');
+    dst.className = 'hist-dst';
+    dst.textContent = destination;
+
+    title.append(src, arrow, dst);
+    title.title = `${source} → ${destination}`;
+  } else {
+    title.textContent = text;
+    title.title = text;
+  }
 
   const metaEl = document.createElement('div');
   metaEl.className = 'hist-meta';
@@ -313,49 +332,107 @@ function buildHistoryItem({ icon, text, meta, url, copyText }) {
   return li;
 }
 
-function globalRunDest(title) {
-  if (!title) return '';
-  const idx = title.indexOf('→');
-  return idx === -1 ? '' : title.slice(idx + 1).trim();
+/** 从 run 标题（Sync <源> → <目标>）解析出源与目标 */
+function parseRunTitle(title) {
+  const raw = String(title || '').trim();
+  const body = raw.replace(/^Sync\s+/i, '');
+  const idx = body.indexOf('→');
+  if (idx === -1) return { source: '', destination: '', text: raw };
+  return {
+    source: body.slice(0, idx).trim(),
+    destination: body.slice(idx + 1).trim(),
+    text: raw,
+  };
+}
+
+function dayBucket(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '更早';
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+  if (diff <= 0) return '今天';
+  if (diff === 1) return '昨天';
+  return '更早';
+}
+
+function updateHistoryHint(count) {
+  if (!historyHint) return;
+  const show = count < 3;
+  historyHint.classList.toggle('visible', show);
+  if (historyList) historyList.style.flex = show ? '0 1 auto' : '1 1 auto';
 }
 
 function renderHistory() {
-  const entries = historyMode === 'global' ? globalRuns : loadHistory();
+  const isGlobal = historyMode === 'global';
+  const all = isGlobal ? globalRuns : loadHistory();
+  const query = (historySearch && historySearch.value ? historySearch.value : '').trim().toLowerCase();
+
   const countEl = document.getElementById('historyCount');
-  if (countEl) countEl.textContent = String(entries.length);
-  if (!entries.length) {
-    historyList.innerHTML = '';
-    historyEmpty.style.display = 'block';
-    return;
-  }
-  historyEmpty.style.display = 'none';
-  historyList.innerHTML = '';
+  if (countEl) countEl.textContent = String(all.length);
 
-  if (historyMode === 'global') {
-    entries.forEach((run) => {
-      const dest = globalRunDest(run.title);
-      const text = run.title || `运行 #${run.id}`;
-      historyList.appendChild(buildHistoryItem({
-        icon: HISTORY_ICONS[run.conclusion] || '🔄',
-        text,
-        meta: `${statusWord(run.conclusion)} · ${fmtTime(run.created_at)}`,
-        url: run.html_url,
-        copyText: dest,
-      }));
-    });
-    return;
-  }
-
-  entries.forEach((entry) => {
-    const archLabel = entry.arch ? `${entry.arch} · ` : '';
-    historyList.appendChild(buildHistoryItem({
+  const normalized = all.map((entry) => {
+    if (isGlobal) {
+      const parsed = parseRunTitle(entry.title);
+      return {
+        icon: HISTORY_ICONS[entry.conclusion] || '🔄',
+        source: parsed.source,
+        destination: parsed.destination,
+        text: parsed.text || `运行 #${entry.id}`,
+        meta: `${statusWord(entry.conclusion)} · ${fmtTime(entry.created_at)}`,
+        ts: entry.created_at,
+        url: entry.html_url,
+        copyText: parsed.destination,
+        search: `${parsed.text} ${statusWord(entry.conclusion)} ${entry.id}`.toLowerCase(),
+      };
+    }
+    const label = entry.destination || entry.source || '未知镜像';
+    return {
       icon: HISTORY_ICONS[entry.conclusion] || '🔄',
-      text: entry.destination || entry.source || '未知镜像',
-      meta: `${archLabel}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`,
+      source: entry.source || '',
+      destination: entry.destination || '',
+      text: label,
+      meta: `${entry.arch ? `${entry.arch} · ` : ''}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`,
+      ts: entry.startedAt,
       url: entry.htmlUrl,
       copyText: entry.destination || '',
-    }));
+      search: `${entry.source || ''} ${entry.destination || ''} ${entry.arch || ''} ${statusWord(entry.conclusion)}`.toLowerCase(),
+    };
   });
+
+  historyList.innerHTML = '';
+
+  if (!all.length) {
+    historyEmpty.style.display = 'none';
+    updateHistoryHint(0);
+    return;
+  }
+
+  const entries = query ? normalized.filter((e) => e.search.includes(query)) : normalized;
+
+  if (!entries.length) {
+    historyEmpty.textContent = '没有匹配的记录';
+    historyEmpty.style.display = 'block';
+    if (historyHint) historyHint.classList.remove('visible');
+    if (historyList) historyList.style.flex = '1 1 auto';
+    return;
+  }
+
+  historyEmpty.style.display = 'none';
+
+  let lastDay = '';
+  entries.forEach((entry) => {
+    const day = dayBucket(entry.ts);
+    if (day !== lastDay) {
+      lastDay = day;
+      const header = document.createElement('li');
+      header.className = 'hist-day';
+      header.textContent = day;
+      historyList.appendChild(header);
+    }
+    historyList.appendChild(buildHistoryItem(entry));
+  });
+
+  updateHistoryHint(query ? 0 : all.length);
 }
 
 /** 拉取全局运行记录（失败则回退本地缓存） */
@@ -650,6 +727,10 @@ logoutBtn.addEventListener('click', () => {
   showResult('error', '已退出登录。');
   showLogin('已退出登录');
 });
+
+if (historySearch) {
+  historySearch.addEventListener('input', renderHistory);
+}
 
 if (refreshHistoryBtn) {
   refreshHistoryBtn.addEventListener('click', () => {
