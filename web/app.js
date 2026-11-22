@@ -48,8 +48,9 @@ const copyBtn = document.getElementById('copyBtn');
 const progressDiv = document.getElementById('progressDrawer');
 const drawerBackdrop = document.getElementById('drawerBackdrop');
 const drawerClose = document.getElementById('drawerClose');
-const progressChip = document.getElementById('progressChip');
-const progressChipText = document.getElementById('progressChipText');
+const progressBar = document.getElementById('progressBar');
+const progressBarText = document.getElementById('progressBarText');
+const progressBarBtn = document.getElementById('progressBarBtn');
 const statusBadge = document.getElementById('statusBadge');
 const stepList = document.getElementById('stepList');
 const runLink = document.getElementById('runLink');
@@ -197,7 +198,7 @@ function openDrawer() {
   progressDiv.setAttribute('aria-hidden', 'false');
   if (drawerBackdrop) drawerBackdrop.classList.add('open');
   document.body.style.overflow = 'hidden';
-  hideChip();
+  hideBar();
 }
 
 function closeDrawer() {
@@ -206,17 +207,17 @@ function closeDrawer() {
   progressDiv.setAttribute('aria-hidden', 'true');
   if (drawerBackdrop) drawerBackdrop.classList.remove('open');
   document.body.style.overflow = '';
-  if (trackingActive) showChip('同步中 · 查看');
+  if (trackingActive) showBar('正在同步…');
 }
 
-function showChip(text) {
-  if (!progressChip) return;
-  if (progressChipText) progressChipText.textContent = text || '查看进度';
-  progressChip.classList.add('visible');
+function showBar(text) {
+  if (!progressBar) return;
+  if (progressBarText) progressBarText.textContent = text || '正在同步…';
+  progressBar.classList.add('visible');
 }
 
-function hideChip() {
-  if (progressChip) progressChip.classList.remove('visible');
+function hideBar() {
+  if (progressBar) progressBar.classList.remove('visible');
 }
 
 /** 统一带上登录令牌的 fetch */
@@ -233,7 +234,7 @@ function handleUnauthorized(message) {
   stopPolling();
   trackingActive = false;
   closeDrawer();
-  hideChip();
+  hideBar();
   showLogin(message || '登录已过期，请重新登录');
 }
 
@@ -659,7 +660,7 @@ async function pollStatus(runId, htmlUrl, destination) {
       stopPolling();
       try { localStorage.removeItem(LAST_RUN_KEY); } catch { /* ignore */ }
       closeDrawer();
-      hideChip();
+      hideBar();
       showResult('error', '找不到这次运行记录（可能已被 GitHub 清理），请重新触发同步。');
       return;
     }
@@ -706,13 +707,11 @@ async function pollStatus(runId, htmlUrl, destination) {
       }
 
       trackingActive = false;
-      if (!drawerIsOpen()) {
-        showChip(data.conclusion === 'success' ? '已同步 · 查看' : '同步结束 · 查看');
-      }
+      hideBar();
       return;
     }
 
-    if (!drawerIsOpen()) showChip('同步中 · 查看');
+    if (!drawerIsOpen()) showBar('正在同步…');
     showResult('loading', '正在同步，进度会自动更新…');
     pollTimer = setTimeout(() => pollStatus(runId, data.html_url || htmlUrl, destination), POLL_INTERVAL_MS);
   } catch (err) {
@@ -752,7 +751,7 @@ async function restoreLastRun() {
   }
 
   trackingActive = true;
-  showChip(last.conclusion ? '上次同步 · 查看' : '同步中 · 查看');
+  showBar(last.conclusion ? '上次同步已结束' : '正在同步…');
 
   pollStartedAt = Date.now();
   pollStatus(last.runId, last.htmlUrl, last.destination);
@@ -874,14 +873,14 @@ logoutBtn.addEventListener('click', () => {
   stopPolling();
   trackingActive = false;
   closeDrawer();
-  hideChip();
+  hideBar();
   showResult('error', '已退出登录。');
   showLogin('已退出登录');
 });
 
 if (drawerClose) drawerClose.addEventListener('click', closeDrawer);
 if (drawerBackdrop) drawerBackdrop.addEventListener('click', closeDrawer);
-if (progressChip) progressChip.addEventListener('click', openDrawer);
+if (progressBarBtn) progressBarBtn.addEventListener('click', openDrawer);
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && drawerIsOpen()) closeDrawer();
@@ -930,7 +929,7 @@ form.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = '触发中…';
   closeDrawer();
-  hideChip();
+  hideBar();
   showResult('loading', '正在触发同步任务…');
 
   try {

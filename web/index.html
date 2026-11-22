@@ -785,38 +785,34 @@
     .drawer-body::-webkit-scrollbar { width: 6px; }
     .drawer-body::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
 
-    /* 抽屉关闭后的悬浮角标 */
-    .progress-chip {
-      position: fixed;
-      right: 1rem;
-      bottom: 1rem;
-      z-index: 45;
+    /* 抽屉关闭后的内联状态条 */
+    .progress-bar {
       display: none;
       align-items: center;
-      gap: 0.45rem;
-      width: auto;
-      margin: 0;
-      padding: 0.5rem 0.85rem;
-      border-radius: 999px;
-      border: 1px solid var(--accent-soft-border);
-      background: var(--card-bg);
-      color: var(--accent-text);
-      font-size: 0.78rem;
-      font-weight: 600;
-      box-shadow: var(--card-shadow);
-      cursor: pointer;
-      backdrop-filter: blur(10px);
+      gap: 0.5rem;
+      margin-top: 0.9rem;
+      padding: 0.55rem 0.7rem 0.55rem 0.85rem;
+      border-radius: 8px;
+      border: 1px solid var(--info-border);
+      background: var(--info-bg);
+      color: var(--info);
+      font-size: 0.79rem;
     }
 
-    .progress-chip.visible { display: inline-flex; }
+    .progress-bar.visible { display: flex; }
 
-    .progress-chip .dot {
+    .progress-bar .pb-dot {
+      flex: none;
       width: 8px;
       height: 8px;
       border-radius: 50%;
       background: var(--info);
       animation: chip-pulse 1.6s ease-out infinite;
     }
+
+    .progress-bar .pb-text { flex: 1; min-width: 0; }
+
+    .progress-bar .mini-btn { flex: none; }
 
     @keyframes chip-pulse {
       0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45); }
@@ -1034,6 +1030,12 @@
       </form>
 
       <div id="result"></div>
+
+      <div class="progress-bar" id="progressBar">
+        <span class="pb-dot"></span>
+        <span class="pb-text" id="progressBarText">正在同步…</span>
+        <button type="button" id="progressBarBtn" class="mini-btn">查看进度</button>
+      </div>
     </main>
   </div>
 
@@ -1051,11 +1053,7 @@
     </div>
   </aside>
 
-  <!-- 抽屉关闭后的悬浮角标 -->
-  <button type="button" id="progressChip" class="progress-chip">
-    <span class="dot"></span>
-    <span id="progressChipText">同步中</span>
-  </button>
+  <!-- 抽屉关闭后的内联状态条在卡片内 -->
 
   <script src="app.js"></script>
 </body>
