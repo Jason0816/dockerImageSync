@@ -46,6 +46,7 @@
 
       --input-bg: rgba(15, 23, 42, 0.7);
       --input-border: rgba(148, 163, 184, 0.2);
+      --locked-bg: rgba(15, 23, 42, 0.42);
       --option-bg: #1e293b;
       --select-arrow: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
 
@@ -108,6 +109,7 @@
 
       --input-bg: #ffffff;
       --input-border: rgba(15, 23, 42, 0.15);
+      --locked-bg: #f4f7fb;
       --option-bg: #ffffff;
       --select-arrow: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23475569' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
 
@@ -279,9 +281,10 @@
     .field-inline input { flex: 1; min-width: 0; }
 
     .field-inline input[readonly] {
+      background: var(--locked-bg);
       color: var(--muted);
       cursor: not-allowed;
-      opacity: 0.85;
+      opacity: 0.9;
     }
 
     .lock-btn {
