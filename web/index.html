@@ -425,6 +425,9 @@
     #loginMsg { margin-top: 1rem; min-height: 1.2rem; font-size: 0.8rem; color: var(--err); line-height: 1.45; }
 
     /* ================= 左右布局 ================= */
+    /* 登录页正常滚动；进入应用后锁定一屏高度，内部各自滚动 */
+    body.app-mode { overflow: hidden; }
+
     #appView {
       display: none;
       width: 100%;
@@ -436,10 +439,14 @@
 
     #appView.visible { display: grid; }
 
+    body.app-mode #appView { height: calc(100vh - 4rem); }
+
     .sidebar {
       display: flex;
       flex-direction: column;
       padding: 1.15rem 1.1rem;
+      min-height: 0;
+      overflow: hidden;
       background: var(--sidebar-bg);
     }
 
@@ -635,7 +642,16 @@
     }
 
     /* ================= 主面板 ================= */
-    .panel { padding: 2rem 2.1rem 1.9rem; }
+    .panel {
+      padding: 2rem 2.1rem 1.9rem;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
+    }
+
+    .panel::-webkit-scrollbar { width: 6px; }
+    .panel::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
 
     .app-head {
       display: flex;
@@ -868,6 +884,9 @@
     @media (max-width: 880px) {
       body { padding: 1.25rem 0.9rem; }
 
+      body.app-mode { overflow: auto; }
+      body.app-mode #appView { height: auto; }
+
       .theme-switch { top: 0.5rem; right: 0.6rem; }
 
       #appView { max-width: 560px; }
@@ -875,15 +894,14 @@
       #appView.visible { display: block; }
 
       .sidebar {
-        position: static;
-        max-height: none;
         margin-top: 1rem;
         padding: 1rem;
+        overflow: visible;
       }
 
-      .history-list { max-height: 260px; }
+      .panel { overflow: visible; padding: 1.6rem 1.35rem 1.5rem; }
 
-      .panel { padding: 1.6rem 1.35rem 1.5rem; }
+      .history-list { max-height: 300px; }
 
       #loginView { margin-top: 8vh; padding: 2rem 1.6rem; }
     }

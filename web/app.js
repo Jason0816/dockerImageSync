@@ -175,6 +175,7 @@ function setLoginMsg(message) {
 
 function showLogin(message) {
   appView.classList.remove('visible');
+  document.body.classList.remove('app-mode');
   loginView.style.display = 'block';
   setLoginMsg(message || '');
   if (!IS_FILE_PROTOCOL) passwordInput.focus();
@@ -183,6 +184,7 @@ function showLogin(message) {
 function showApp() {
   loginView.style.display = 'none';
   appView.classList.add('visible');
+  document.body.classList.add('app-mode');
   renderPreview();
 }
 
