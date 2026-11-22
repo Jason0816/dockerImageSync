@@ -32,6 +32,7 @@ const passwordInput = document.getElementById('password');
 const loginBtn = document.getElementById('loginBtn');
 const loginMsg = document.getElementById('loginMsg');
 const logoutBtn = document.getElementById('logoutBtn');
+const themeSwitch = document.getElementById('themeSwitch');
 
 const form = document.getElementById('syncForm');
 const sourceInput = document.getElementById('source');
@@ -55,6 +56,54 @@ const refreshHistoryBtn = document.getElementById('refreshHistory');
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
 let pollStartedAt = 0;
+
+/* ---------------- 主题（亮 / 暗 / 跟随系统） ---------------- */
+
+const THEME_KEY = 'imageSync.theme';
+const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+
+function getThemeMode() {
+  try {
+    return localStorage.getItem(THEME_KEY) || 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+function applyTheme(mode) {
+  const resolved = mode === 'auto' ? (themeMedia.matches ? 'dark' : 'light') : mode;
+  const root = document.documentElement;
+  root.setAttribute('data-theme', resolved);
+  root.style.colorScheme = resolved;
+
+  if (themeSwitch) {
+    themeSwitch.querySelectorAll('button[data-mode]').forEach((btn) => {
+      const active = btn.dataset.mode === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+}
+
+function setThemeMode(mode) {
+  try {
+    localStorage.setItem(THEME_KEY, mode);
+  } catch { /* ignore */ }
+  applyTheme(mode);
+}
+
+if (themeSwitch) {
+  themeSwitch.addEventListener('click', (event) => {
+    const btn = event.target.closest('button[data-mode]');
+    if (btn) setThemeMode(btn.dataset.mode);
+  });
+}
+
+themeMedia.addEventListener('change', () => {
+  if (getThemeMode() === 'auto') applyTheme('auto');
+});
+
+applyTheme(getThemeMode());
 
 /* ---------------- 登录态 ---------------- */
 
