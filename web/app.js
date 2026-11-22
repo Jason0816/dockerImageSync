@@ -46,9 +46,9 @@ const statusBadge = document.getElementById('statusBadge');
 const stepList = document.getElementById('stepList');
 const runLink = document.getElementById('runLink');
 const progressTitle = document.getElementById('progressTitle');
-const historySection = document.getElementById('history');
 const historyList = document.getElementById('historyList');
-const clearHistoryBtn = document.getElementById('clearHistory');
+const historyEmpty = document.getElementById('historyEmpty');
+const refreshHistoryBtn = document.getElementById('refreshHistory');
 
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
@@ -81,7 +81,7 @@ function setLoginMsg(message) {
 }
 
 function showLogin(message) {
-  appView.style.display = 'none';
+  appView.classList.remove('visible');
   loginView.style.display = 'block';
   setLoginMsg(message || '');
   if (!IS_FILE_PROTOCOL) passwordInput.focus();
@@ -89,7 +89,7 @@ function showLogin(message) {
 
 function showApp() {
   loginView.style.display = 'none';
-  appView.style.display = 'block';
+  appView.classList.add('visible');
   renderPreview();
 }
 
@@ -187,6 +187,7 @@ function parseImage(source) {
 
 function renderPreview() {
   const parsed = parseImage(sourceInput.value);
+  if (copyBtn) copyBtn.disabled = !parsed;
   if (!parsed) {
     previewTarget.textContent = '填写源镜像地址后自动生成';
     return;
@@ -254,32 +255,38 @@ let globalRuns = [];
 
 function buildHistoryItem({ icon, text, meta, url, copyText }) {
   const li = document.createElement('li');
+  li.className = 'hist-item';
 
   const iconEl = document.createElement('span');
+  iconEl.className = 'hist-icon';
   iconEl.textContent = icon;
 
-  const textEl = document.createElement('span');
-  textEl.className = 'h-dest';
-  textEl.textContent = text;
-  textEl.title = text;
+  const body = document.createElement('div');
+  body.className = 'hist-body';
 
-  const metaEl = document.createElement('span');
-  metaEl.className = 'h-time';
+  const title = document.createElement('div');
+  title.className = 'hist-title';
+  title.textContent = text;
+  title.title = text;
+
+  const metaEl = document.createElement('div');
+  metaEl.className = 'hist-meta';
   metaEl.textContent = meta;
 
-  li.append(iconEl, textEl, metaEl);
+  const actions = document.createElement('div');
+  actions.className = 'hist-actions';
 
   if (copyText) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'copy-btn sm';
+    btn.className = 'mini-btn';
     btn.textContent = '复制';
     btn.title = `复制：${copyText}`;
     btn.addEventListener('click', async () => {
       try {
         const ok = await writeClipboard(copyText);
         if (!ok) return;
-        btn.textContent = '✓';
+        btn.textContent = '已复制 ✓';
         btn.classList.add('copied');
         setTimeout(() => {
           btn.textContent = '复制';
@@ -287,7 +294,7 @@ function buildHistoryItem({ icon, text, meta, url, copyText }) {
         }, 1500);
       } catch { /* ignore */ }
     });
-    li.appendChild(btn);
+    actions.appendChild(btn);
   }
 
   if (url) {
@@ -295,9 +302,13 @@ function buildHistoryItem({ icon, text, meta, url, copyText }) {
     a.href = url;
     a.target = '_blank';
     a.rel = 'noopener';
-    a.textContent = '日志';
-    li.appendChild(a);
+    a.textContent = '日志 →';
+    actions.appendChild(a);
   }
+
+  body.append(title, metaEl);
+  if (actions.childNodes.length) body.appendChild(actions);
+  li.append(iconEl, body);
 
   return li;
 }
@@ -310,11 +321,14 @@ function globalRunDest(title) {
 
 function renderHistory() {
   const entries = historyMode === 'global' ? globalRuns : loadHistory();
+  const countEl = document.getElementById('historyCount');
+  if (countEl) countEl.textContent = String(entries.length);
   if (!entries.length) {
-    historySection.style.display = 'none';
+    historyList.innerHTML = '';
+    historyEmpty.style.display = 'block';
     return;
   }
-  historySection.style.display = 'block';
+  historyEmpty.style.display = 'none';
   historyList.innerHTML = '';
 
   if (historyMode === 'global') {
@@ -637,16 +651,16 @@ logoutBtn.addEventListener('click', () => {
   showLogin('已退出登录');
 });
 
-clearHistoryBtn.addEventListener('click', () => {
-  stopPolling();
-  try {
-    localStorage.removeItem(HISTORY_KEY);
-    localStorage.removeItem(LAST_RUN_KEY);
-  } catch { /* ignore */ }
-  renderHistory();
-  progressDiv.classList.remove('visible');
-  showResult('success', '已清空本地同步记录。');
-});
+if (refreshHistoryBtn) {
+  refreshHistoryBtn.addEventListener('click', () => {
+    refreshHistoryBtn.disabled = true;
+    refreshHistoryBtn.textContent = '刷新中…';
+    refreshHistory().finally(() => {
+      refreshHistoryBtn.disabled = false;
+      refreshHistoryBtn.textContent = '刷新';
+    });
+  });
+}
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
