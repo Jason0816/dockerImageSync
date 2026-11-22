@@ -264,8 +264,16 @@
       color: #94a3b8;
     }
 
-    .history-list li .h-dest { flex: 1; word-break: break-all; color: #cbd5e1; }
+    .history-list li .h-dest {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #cbd5e1;
+    }
     .history-list li .h-time { color: #64748b; white-space: nowrap; font-size: 0.72rem; }
+    .copy-btn.sm { padding: 0.15rem 0.4rem; font-size: 0.68rem; }
     .history-list li a { color: #7dd3fc; text-decoration: none; white-space: nowrap; }
     .history-list li a:hover { text-decoration: underline; }
     .history-list li.success .h-dest { color: #86efac; }

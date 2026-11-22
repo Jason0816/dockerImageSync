@@ -154,7 +154,6 @@ function upsertHistory(entry) {
   if (idx === -1) list.unshift(entry);
   else list[idx] = { ...list[idx], ...entry };
   saveHistory(list);
-  renderHistory();
 }
 
 /* ---------------- 渲染 ---------------- */
@@ -250,44 +249,120 @@ function statusWord(conclusion) {
   return '进行中';
 }
 
+let historyMode = 'local'; // 'global' 读 GitHub 运行记录；'local' 回退到本地缓存
+let globalRuns = [];
+
+function buildHistoryItem({ icon, text, meta, url, copyText }) {
+  const li = document.createElement('li');
+
+  const iconEl = document.createElement('span');
+  iconEl.textContent = icon;
+
+  const textEl = document.createElement('span');
+  textEl.className = 'h-dest';
+  textEl.textContent = text;
+  textEl.title = text;
+
+  const metaEl = document.createElement('span');
+  metaEl.className = 'h-time';
+  metaEl.textContent = meta;
+
+  li.append(iconEl, textEl, metaEl);
+
+  if (copyText) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn sm';
+    btn.textContent = '复制';
+    btn.title = `复制：${copyText}`;
+    btn.addEventListener('click', async () => {
+      try {
+        const ok = await writeClipboard(copyText);
+        if (!ok) return;
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = '复制';
+          btn.classList.remove('copied');
+        }, 1500);
+      } catch { /* ignore */ }
+    });
+    li.appendChild(btn);
+  }
+
+  if (url) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = '日志';
+    li.appendChild(a);
+  }
+
+  return li;
+}
+
+function globalRunDest(title) {
+  if (!title) return '';
+  const idx = title.indexOf('→');
+  return idx === -1 ? '' : title.slice(idx + 1).trim();
+}
+
 function renderHistory() {
-  const list = loadHistory();
-  if (!list.length) {
+  const entries = historyMode === 'global' ? globalRuns : loadHistory();
+  if (!entries.length) {
     historySection.style.display = 'none';
     return;
   }
   historySection.style.display = 'block';
   historyList.innerHTML = '';
 
-  list.forEach((entry) => {
-    const li = document.createElement('li');
-    if (entry.conclusion) li.className = entry.conclusion;
+  if (historyMode === 'global') {
+    entries.forEach((run) => {
+      const dest = globalRunDest(run.title);
+      const text = run.title || `运行 #${run.id}`;
+      historyList.appendChild(buildHistoryItem({
+        icon: HISTORY_ICONS[run.conclusion] || '🔄',
+        text,
+        meta: `${statusWord(run.conclusion)} · ${fmtTime(run.created_at)}`,
+        url: run.html_url,
+        copyText: dest,
+      }));
+    });
+    return;
+  }
 
-    const icon = document.createElement('span');
-    icon.textContent = HISTORY_ICONS[entry.conclusion] || '🔄';
-
-    const dest = document.createElement('span');
-    dest.className = 'h-dest';
-    dest.textContent = entry.destination || entry.source || '未知镜像';
-
-    const meta = document.createElement('span');
-    meta.className = 'h-time';
+  entries.forEach((entry) => {
     const archLabel = entry.arch ? `${entry.arch} · ` : '';
-    meta.textContent = `${archLabel}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`;
-
-    li.append(icon, dest, meta);
-
-    if (entry.htmlUrl) {
-      const a = document.createElement('a');
-      a.href = entry.htmlUrl;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = '日志';
-      li.appendChild(a);
-    }
-
-    historyList.appendChild(li);
+    historyList.appendChild(buildHistoryItem({
+      icon: HISTORY_ICONS[entry.conclusion] || '🔄',
+      text: entry.destination || entry.source || '未知镜像',
+      meta: `${archLabel}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`,
+      url: entry.htmlUrl,
+      copyText: entry.destination || '',
+    }));
   });
+}
+
+/** 拉取全局运行记录（失败则回退本地缓存） */
+async function refreshHistory() {
+  if (!getToken()) {
+    historyMode = 'local';
+    renderHistory();
+    return;
+  }
+  try {
+    const resp = await apiFetch('/api/runs?limit=15');
+    if (resp.status === 401) return;
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'bad response');
+    globalRuns = data.runs || [];
+    historyMode = 'global';
+  } catch {
+    historyMode = 'local';
+  }
+  renderHistory();
 }
 
 /* ---------------- 配置 / 进度 ---------------- */
@@ -385,6 +460,7 @@ async function pollStatus(runId, htmlUrl, destination) {
         conclusion: data.conclusion,
         finishedAt: Date.now(),
       });
+      refreshHistory();
       const savedRun = loadLastRun();
       if (savedRun && savedRun.runId === runId) {
         saveLastRun({ ...savedRun, conclusion: data.conclusion, htmlUrl: data.html_url || htmlUrl });
@@ -540,6 +616,7 @@ loginForm.addEventListener('submit', async (e) => {
       passwordInput.value = '';
       showApp();
       await loadConfig();
+      refreshHistory();
       restoreLastRun();
     } else {
       setLoginMsg(data.error || `登录失败 (HTTP ${resp.status})`);
@@ -631,6 +708,8 @@ form.addEventListener('submit', async (e) => {
         saveLastRun(record);
         upsertHistory(record);
         startTracking(data.run_id, data.html_url, data.destination);
+        // 新 run 出现在全局列表里通常有几秒延迟
+        setTimeout(() => refreshHistory(), 6000);
         return;
       }
       submitBtn.disabled = false;
@@ -667,6 +746,7 @@ async function boot() {
       if (resp.ok) {
         showApp();
         await loadConfig();
+        refreshHistory();
         restoreLastRun();
         return;
       }

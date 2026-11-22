@@ -405,6 +405,46 @@ async function handleStatus(env, url) {
   }
 }
 
+/**
+ * 全局同步历史：读取该仓库最近的工作流运行
+ */
+async function handleRuns(env, url) {
+  if (!env.GITHUB_REPO || !env.GITHUB_TOKEN) {
+    return jsonResponse(env, { error: 'Server misconfiguration' }, 500);
+  }
+
+  const rawLimit = Number(url.searchParams.get('limit'));
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 15, 1), 50);
+
+  try {
+    const resp = await githubFetch(
+      env,
+      `/repos/${env.GITHUB_REPO}/actions/runs?per_page=${limit}`
+    );
+    if (!resp.ok) {
+      return jsonResponse(env, { ok: false, error: `GitHub API returned ${resp.status}` }, 502);
+    }
+
+    const data = await resp.json();
+    const runs = (data.workflow_runs || [])
+      .filter((r) => r.path === `.github/workflows/${env.WORKFLOW_ID}`)
+      .slice(0, limit)
+      .map((r) => ({
+        id: r.id,
+        title: r.display_title || '',
+        status: r.status,
+        conclusion: r.conclusion,
+        created_at: r.created_at,
+        html_url: r.html_url,
+      }));
+
+    return jsonResponse(env, { ok: true, runs });
+  } catch (err) {
+    console.error('runs failed:', err);
+    return jsonResponse(env, { ok: false, error: 'Failed to contact GitHub API' }, 502);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -447,6 +487,15 @@ export default {
       const authError = await requireAuth(request, env);
       if (authError) return authError;
       return handleSync(request, env);
+    }
+
+    if (url.pathname === '/api/runs') {
+      if (request.method !== 'GET') {
+        return jsonResponse(env, { error: 'Method not allowed. Use GET /api/runs' }, 405);
+      }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
+      return handleRuns(env, url);
     }
 
     if (url.pathname === '/api/status') {
