@@ -37,6 +37,8 @@ const themeSwitch = document.getElementById('themeSwitch');
 const form = document.getElementById('syncForm');
 const sourceInput = document.getElementById('source');
 const orgInput = document.getElementById('org');
+const orgLockBtn = document.getElementById('orgLock');
+const orgHint = document.getElementById('orgHint');
 const archSelect = document.getElementById('arch');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
@@ -104,6 +106,39 @@ themeMedia.addEventListener('change', () => {
 });
 
 applyTheme(getThemeMode());
+
+/* ---------------- 目标组织锁定 ---------------- */
+
+let orgLocked = true;
+
+function setOrgLocked(locked) {
+  orgLocked = locked;
+
+  if (orgInput) orgInput.readOnly = locked;
+
+  if (orgLockBtn) {
+    orgLockBtn.setAttribute('aria-pressed', String(locked));
+    orgLockBtn.title = locked ? '点击解锁以修改' : '点击锁定';
+    orgLockBtn.setAttribute('aria-label', locked ? '解锁组织名' : '锁定组织名');
+  }
+
+  if (orgHint) {
+    orgHint.textContent = locked
+      ? 'SWR 组织名，默认 ascend-sync；已锁定，解锁后可修改'
+      : '已解锁：可直接修改组织名，改完建议重新锁定';
+  }
+
+  if (!locked && orgInput) {
+    orgInput.focus();
+    orgInput.select();
+  }
+}
+
+if (orgLockBtn) {
+  orgLockBtn.addEventListener('click', () => setOrgLocked(!orgLocked));
+}
+
+setOrgLocked(true);
 
 /* ---------------- 登录态 ---------------- */
 

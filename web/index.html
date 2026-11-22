@@ -269,6 +269,49 @@
 
     .hint { font-size: 0.72rem; color: var(--dim); margin-top: 0.3rem; }
 
+    /* 目标组织：锁定 / 解锁 */
+    .field-inline {
+      display: flex;
+      align-items: stretch;
+      gap: 0.4rem;
+    }
+
+    .field-inline input { flex: 1; min-width: 0; }
+
+    .field-inline input[readonly] {
+      color: var(--muted);
+      cursor: not-allowed;
+      opacity: 0.85;
+    }
+
+    .lock-btn {
+      flex: none;
+      width: 40px;
+      margin: 0;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+      color: var(--dim);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .lock-btn svg { width: 15px; height: 15px; }
+    .lock-btn:hover { color: var(--text); border-color: var(--accent); opacity: 1; }
+
+    .lock-btn[aria-pressed="true"] .icon-unlocked { display: none; }
+    .lock-btn[aria-pressed="false"] .icon-locked { display: none; }
+
+    .lock-btn[aria-pressed="false"] {
+      color: var(--accent-text);
+      border-color: var(--accent-soft-border);
+      background: var(--accent-soft-bg);
+    }
+
     button {
       width: 100%;
       padding: 0.72rem;
@@ -760,8 +803,23 @@
 
         <div class="form-group">
           <label for="org">目标组织</label>
-          <input type="text" id="org" name="org" value="ascend-sync" placeholder="ascend-sync" />
-          <div class="hint">SWR 组织名，默认 ascend-sync，可按需修改</div>
+          <div class="field-inline">
+            <input type="text" id="org" name="org" value="ascend-sync" placeholder="ascend-sync" readonly />
+            <button type="button" id="orgLock" class="lock-btn" aria-pressed="true"
+                    title="点击解锁以修改" aria-label="解锁组织名">
+              <svg class="icon-locked" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4.5" y="10.5" width="15" height="10" rx="2.2" />
+                <path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9" />
+              </svg>
+              <svg class="icon-unlocked" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4.5" y="10.5" width="15" height="10" rx="2.2" />
+                <path d="M8 10.5V7.6a4 4 0 0 1 7.6-1.7" />
+              </svg>
+            </button>
+          </div>
+          <div class="hint" id="orgHint">SWR 组织名，默认 ascend-sync；已锁定，解锁后可修改</div>
         </div>
 
         <div class="form-group">
