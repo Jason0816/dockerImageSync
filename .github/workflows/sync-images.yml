@@ -137,3 +137,20 @@ jobs:
           fi
 
           ./image-syncer "${ARGS[@]}"
+
+      - name: Set SWR repositories public
+        if: success()
+        shell: bash
+        continue-on-error: true
+        env:
+          SWR_AK: ${{ secrets.SWR_AK }}
+          SWR_SK: ${{ secrets.SWR_SK }}
+          SWR_PROJECT_ID: ${{ secrets.SWR_PROJECT_ID }}
+        run: |
+          DESTINATIONS=$(grep -v '^[[:space:]]*#' images.yaml \
+            | sed '/^[[:space:]]*$/d' \
+            | awk -F': ' '{print $2}' \
+            | paste -sd, -)
+          echo "目标仓库: ${DESTINATIONS}"
+          python3 -m pip install --quiet --disable-pip-version-check huaweicloudsdkcore huaweicloudsdkswr
+          SWR_DESTINATIONS="$DESTINATIONS" python3 scripts/make_repo_public.py

@@ -75,6 +75,10 @@ repo/
    `./image-syncer --auth=./auth.yaml --images=./images.yaml --os=linux --arch=<arch> --proc=6 --retries=2`。
    多架构镜像默认只同步 `amd64`，避免上传数倍数据（`nginx` 全平台约 500MB、近百个任务，跨境推送可能耗时数十分钟）。
 4. 在 `env` 中注入 Secrets：`SWR_USERNAME`、`SWR_PASSWORD`，以及可选的 Docker Hub / Quay 源端凭证（用于规避匿名拉取限流）。
+5. 同步成功后调用华为云 SWR API（[`UpdateRepo`](https://support.huaweicloud.com/intl/zh-cn/tr-central-201-api-swr/swr_02_0032.html)）把目标仓库设为**公开**：
+   `PUT /v2/manage/namespaces/{ns}/repos/{repo}`，body `{"is_public": true}`。
+   实现见 `scripts/make_repo_public.py`（使用 `SWR_AK` / `SWR_SK` / `SWR_PROJECT_ID`，未配置时自动跳过）。
+   可见性按仓库生效，因此新仓库第一次同步后设为公开，后续推新 tag 保持公开。
 
 **关键约束**：`auth.yaml` 固定来自仓库，不接受前端传入；工作流只覆盖 `images.yaml`。
 
@@ -155,6 +159,8 @@ quay.io:
 |---|---|---|
 | GitHub Secrets | `SWR_USERNAME` | 华为云 SWR 长期登录用户名（`区域项目名@AK`，如 `cn-north-4@XXXXXXXX`） |
 | GitHub Secrets | `SWR_PASSWORD` | 华为云 SWR 长期登录密钥 |
+| GitHub Secrets | `SWR_AK` / `SWR_SK` | 可选，华为云访问密钥（用于调用 SWR API 把仓库设为公开） |
+| GitHub Secrets | `SWR_PROJECT_ID` | 可选，`cn-east-4` 区域项目 ID（与 AK/SK 配套） |
 | GitHub Secrets | `SOURCE_DOCKERHUB_USER` / `_PASS` | 可选，私有 Docker Hub 镜像 |
 | GitHub Secrets | `SOURCE_QUAY_USER` / `_PASS` | 可选，私有 Quay 镜像 |
 | Worker 环境变量 | `GITHUB_REPO` | `owner/repo` |
@@ -197,4 +203,5 @@ quay.io:
 6. 若使用 Vercel 替代 Cloudflare Worker，接口契约与请求体保持不变，仅部署方式和环境变量配置入口不同。
 7. 代理层对 `destination` 做 `swr.` 域名前缀校验，是低成本防止误推送至其他仓库的有效手段，建议保留。
 8. 访问口令鉴权只保护 API（静态页面本身是公开的，但页面不含任何凭证）。口令请用足够长度的随机串；如需更强防护（SSO、IP 白名单），可叠加 Cloudflare Access。
+9. 仓库被设为**公开**后，互联网上任何人可匿名拉取该镜像；涉及敏感内容的镜像请谨慎使用自动公开，或改为仅内网/VPC 访问。
 
