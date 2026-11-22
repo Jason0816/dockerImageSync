@@ -55,7 +55,7 @@
 | 架构过滤 | `amd64`（默认）/ `arm64` / `all`，大幅减少传输量与耗时 |
 | 访问口令 | 登录后才能调用接口，口令存在 Worker Secret |
 | 实时进度 | 轮询 GitHub Actions 运行状态，展示到每个步骤 |
-| 自动公开 | 同步后调用 SWR API 设置 `is_public: true` |
+| 自动公开 | 同步后调用 SWR API 设置 `is_public: true`，可在页面上关闭 |
 | 主题 | 亮色 / 暗色 / 跟随系统 |
 | 历史记录 | 全局（来自 Actions 运行记录），支持搜索、日期分组、复制 |
 
@@ -94,7 +94,8 @@ GitHub Actions
    - `docker.io/library/nginx:1.25.3`
    - `quay.io/prometheus/node-exporter:v1.7.0`
 4. 选择目标架构（与目标机器一致）
-5. 点「开始同步」，页面会实时显示进度与最终结果
+5. 「公开镜像」开关默认开启（关闭则同步后不自动设为公开）
+6. 点「开始同步」，页面会实时显示进度与最终结果
 
 同步成功后即可拉取：
 
@@ -240,6 +241,7 @@ curl -s https://<worker>/api/runs?limit=5 \
 | `destination` | ✅ | 目标镜像地址（Worker 自动生成，一般无需手填） |
 | `tags` | ⬜ | 逗号分隔 tag；留空=按源地址 tag（无 tag 则全量）；`all`=强制全量 |
 | `arch` | ⬜ | `amd64`（默认）/ `arm64` / `all` |
+| `public` | ⬜ | 同步后是否设为公开，默认 `true`；`false` 时跳过该步骤 |
 
 ### Worker 环境变量
 
@@ -279,7 +281,7 @@ docker.io:
 | `POST` | `/api/login` | `{password}` → `{ok, token, expires_at}` |
 | `GET` | `/api/session` | 校验令牌是否有效 |
 | `GET` | `/api/config` | 返回 registry / 默认组织 / 默认架构 |
-| `POST` | `/api/sync` | `{source, org?, arch?}` → `{ok, run_id, html_url, destination}` |
+| `POST` | `/api/sync` | `{source, org?, arch?, public?}` → `{ok, run_id, html_url, destination}` |
 | `GET` | `/api/status?id=` | 运行状态与步骤列表 |
 | `GET` | `/api/runs?limit=15` | 全局运行记录（标题含源/目标镜像） |
 
@@ -342,6 +344,10 @@ Token 缺少 `Contents` 或 `Workflows` 权限；修改 fine-grained token 权�
 **Cloudflare 返回 `error code: 1010`？**
 
 安全策略拦截了非常规 UA（如 Python `urllib`），与本站逻辑无关；用浏览器或 `curl` 访问即可。
+
+**关闭「公开镜像」后，仓库还是公开的？**
+
+该开关只控制「是否自动设为公开」：关闭后工作流会跳过设置步骤，**不会**把已存在的公开仓库改回私有。如需私有，请在 SWR 控制台手动修改，或把工作流中该步骤改为强制 `is_public: false`。
 
 ---
 
