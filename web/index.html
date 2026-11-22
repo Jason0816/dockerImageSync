@@ -704,21 +704,124 @@
     #result.error { display: block; background: var(--err-bg); border: 1px solid var(--err-border); color: var(--err); }
     #result.loading { display: block; background: var(--info-bg); border: 1px solid var(--info-border); color: var(--info); }
 
-    #progress {
-      display: none;
-      margin-top: 1.35rem;
-      border-top: 1px solid var(--divider);
-      padding-top: 1.1rem;
+    /* ================= 进度抽屉 ================= */
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      background: rgba(2, 6, 23, 0.45);
+      backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.22s;
     }
 
-    #progress.visible { display: block; }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
 
-    .progress-head {
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 50;
+      height: 100vh;
+      width: min(420px, 100%);
+      display: flex;
+      flex-direction: column;
+      padding: 1.2rem 1.2rem 1.1rem;
+      background: var(--card-bg);
+      border-left: 1px solid var(--card-border);
+      box-shadow: -24px 0 60px -30px rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(14px);
+      transform: translateX(102%);
+      transition: transform 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-head {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      margin-bottom: 0.8rem;
+      gap: 0.55rem;
+      padding-bottom: 0.8rem;
+      border-bottom: 1px solid var(--divider);
+      margin-bottom: 0.85rem;
+    }
+
+    .drawer-head .progress-title { flex: 1; }
+
+    .icon-btn {
+      flex: none;
+      width: 30px;
+      height: 30px;
+      margin: 0;
+      padding: 0;
+      border-radius: 8px;
+      border: 1px solid var(--input-border);
+      background: var(--input-bg);
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .icon-btn:hover { color: var(--text); border-color: var(--accent); opacity: 1; }
+
+    .drawer-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      padding-right: 0.1rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
+    }
+
+    .drawer-body::-webkit-scrollbar { width: 6px; }
+    .drawer-body::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+
+    /* 抽屉关闭后的悬浮角标 */
+    .progress-chip {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      z-index: 45;
+      display: none;
+      align-items: center;
+      gap: 0.45rem;
+      width: auto;
+      margin: 0;
+      padding: 0.5rem 0.85rem;
+      border-radius: 999px;
+      border: 1px solid var(--accent-soft-border);
+      background: var(--card-bg);
+      color: var(--accent-text);
+      font-size: 0.78rem;
+      font-weight: 600;
+      box-shadow: var(--card-shadow);
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+    }
+
+    .progress-chip.visible { display: inline-flex; }
+
+    .progress-chip .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--info);
+      animation: chip-pulse 1.6s ease-out infinite;
+    }
+
+    @keyframes chip-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45); }
+      70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
     }
 
     .progress-title { font-size: 0.88rem; font-weight: 600; color: var(--text-soft); }
@@ -931,17 +1034,28 @@
       </form>
 
       <div id="result"></div>
-
-      <div id="progress">
-        <div class="progress-head">
-          <span class="progress-title" id="progressTitle">同步进度</span>
-          <span class="badge queued" id="statusBadge">排队中</span>
-        </div>
-        <ol class="steps" id="stepList"></ol>
-        <a class="run-link" id="runLink" href="#" target="_blank" rel="noopener">在 GitHub Actions 中查看 →</a>
-      </div>
     </main>
   </div>
+
+  <!-- 进度抽屉 -->
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" id="progressDrawer" aria-hidden="true" aria-label="同步进度">
+    <div class="drawer-head">
+      <span class="progress-title" id="progressTitle">同步进度</span>
+      <span class="badge queued" id="statusBadge">排队中</span>
+      <button type="button" id="drawerClose" class="icon-btn" aria-label="关闭进度面板" title="关闭">✕</button>
+    </div>
+    <div class="drawer-body">
+      <ol class="steps" id="stepList"></ol>
+      <a class="run-link" id="runLink" href="#" target="_blank" rel="noopener">在 GitHub Actions 中查看 →</a>
+    </div>
+  </aside>
+
+  <!-- 抽屉关闭后的悬浮角标 -->
+  <button type="button" id="progressChip" class="progress-chip">
+    <span class="dot"></span>
+    <span id="progressChipText">同步中</span>
+  </button>
 
   <script src="app.js"></script>
 </body>

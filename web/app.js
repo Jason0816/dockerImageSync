@@ -45,7 +45,11 @@ const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
 const previewTarget = document.getElementById('previewTarget');
 const copyBtn = document.getElementById('copyBtn');
-const progressDiv = document.getElementById('progress');
+const progressDiv = document.getElementById('progressDrawer');
+const drawerBackdrop = document.getElementById('drawerBackdrop');
+const drawerClose = document.getElementById('drawerClose');
+const progressChip = document.getElementById('progressChip');
+const progressChipText = document.getElementById('progressChipText');
 const statusBadge = document.getElementById('statusBadge');
 const stepList = document.getElementById('stepList');
 const runLink = document.getElementById('runLink');
@@ -59,6 +63,7 @@ const refreshHistoryBtn = document.getElementById('refreshHistory');
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
 let pollStartedAt = 0;
+let trackingActive = false;
 
 /* ---------------- 主题（亮 / 暗 / 跟随系统） ---------------- */
 
@@ -180,6 +185,40 @@ function showApp() {
   renderPreview();
 }
 
+/* ---------------- 进度抽屉 ---------------- */
+
+function drawerIsOpen() {
+  return Boolean(progressDiv && progressDiv.classList.contains('open'));
+}
+
+function openDrawer() {
+  if (!progressDiv) return;
+  progressDiv.classList.add('open');
+  progressDiv.setAttribute('aria-hidden', 'false');
+  if (drawerBackdrop) drawerBackdrop.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  hideChip();
+}
+
+function closeDrawer() {
+  if (!progressDiv) return;
+  progressDiv.classList.remove('open');
+  progressDiv.setAttribute('aria-hidden', 'true');
+  if (drawerBackdrop) drawerBackdrop.classList.remove('open');
+  document.body.style.overflow = '';
+  if (trackingActive) showChip('同步中 · 查看');
+}
+
+function showChip(text) {
+  if (!progressChip) return;
+  if (progressChipText) progressChipText.textContent = text || '查看进度';
+  progressChip.classList.add('visible');
+}
+
+function hideChip() {
+  if (progressChip) progressChip.classList.remove('visible');
+}
+
 /** 统一带上登录令牌的 fetch */
 function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -192,6 +231,9 @@ function apiFetch(path, options = {}) {
 function handleUnauthorized(message) {
   clearToken();
   stopPolling();
+  trackingActive = false;
+  closeDrawer();
+  hideChip();
   showLogin(message || '登录已过期，请重新登录');
 }
 
@@ -616,7 +658,8 @@ async function pollStatus(runId, htmlUrl, destination) {
     if (resp.status === 404) {
       stopPolling();
       try { localStorage.removeItem(LAST_RUN_KEY); } catch { /* ignore */ }
-      progressDiv.classList.remove('visible');
+      closeDrawer();
+      hideChip();
       showResult('error', '找不到这次运行记录（可能已被 GitHub 清理），请重新触发同步。');
       return;
     }
@@ -661,9 +704,15 @@ async function pollStatus(runId, htmlUrl, destination) {
       } else {
         showResult('error', '❌ 同步失败，请打开 GitHub Actions 查看日志。');
       }
+
+      trackingActive = false;
+      if (!drawerIsOpen()) {
+        showChip(data.conclusion === 'success' ? '已同步 · 查看' : '同步结束 · 查看');
+      }
       return;
     }
 
+    if (!drawerIsOpen()) showChip('同步中 · 查看');
     showResult('loading', '正在同步，进度会自动更新…');
     pollTimer = setTimeout(() => pollStatus(runId, data.html_url || htmlUrl, destination), POLL_INTERVAL_MS);
   } catch (err) {
@@ -675,7 +724,8 @@ async function pollStatus(runId, htmlUrl, destination) {
 function startTracking(runId, htmlUrl, destination) {
   stopPolling();
   pollStartedAt = Date.now();
-  progressDiv.classList.add('visible');
+  trackingActive = true;
+  openDrawer();
   stepList.innerHTML = '';
   setBadge('queued', '排队中');
   progressTitle.textContent = '同步进度';
@@ -685,12 +735,11 @@ function startTracking(runId, htmlUrl, destination) {
   pollStatus(runId, htmlUrl, destination);
 }
 
-/** 刷新后恢复上次同步的进度 */
+/** 刷新后恢复上次同步的进度（默认只显示角标，不主动弹出抽屉） */
 async function restoreLastRun() {
   const last = loadLastRun();
   if (!last) return;
 
-  progressDiv.classList.add('visible');
   stepList.innerHTML = '';
   setBadge('queued', '查询中…');
   progressTitle.textContent = '上次同步';
@@ -701,6 +750,9 @@ async function restoreLastRun() {
   if (last.destination) {
     showResult('loading', `上次同步：${last.destination}`);
   }
+
+  trackingActive = true;
+  showChip(last.conclusion ? '上次同步 · 查看' : '同步中 · 查看');
 
   pollStartedAt = Date.now();
   pollStatus(last.runId, last.htmlUrl, last.destination);
@@ -820,9 +872,19 @@ loginForm.addEventListener('submit', async (e) => {
 logoutBtn.addEventListener('click', () => {
   clearToken();
   stopPolling();
-  progressDiv.classList.remove('visible');
+  trackingActive = false;
+  closeDrawer();
+  hideChip();
   showResult('error', '已退出登录。');
   showLogin('已退出登录');
+});
+
+if (drawerClose) drawerClose.addEventListener('click', closeDrawer);
+if (drawerBackdrop) drawerBackdrop.addEventListener('click', closeDrawer);
+if (progressChip) progressChip.addEventListener('click', openDrawer);
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && drawerIsOpen()) closeDrawer();
 });
 
 if (historySearch) {
@@ -867,7 +929,8 @@ form.addEventListener('submit', async (e) => {
 
   submitBtn.disabled = true;
   submitBtn.textContent = '触发中…';
-  progressDiv.classList.remove('visible');
+  closeDrawer();
+  hideChip();
   showResult('loading', '正在触发同步任务…');
 
   try {
@@ -887,7 +950,6 @@ form.addEventListener('submit', async (e) => {
     const data = await response.json();
 
     if (response.ok && data.ok) {
-      progressDiv.classList.add('visible');
       if (data.run_id) {
         const record = {
           runId: data.run_id,
