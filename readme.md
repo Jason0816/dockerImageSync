@@ -1,212 +1,346 @@
+# dockerImageSync
 
-# 容器镜像自动同步系统 · 实现规格说明（华为云 SWR 版）
+把 Docker Hub / quay.io 的镜像同步到**华为云 SWR** 的一站式小工具：填一个镜像地址，自动触发 GitHub Actions 完成拉取与推送，页面上实时看进度。
 
-## 1. 项目目标
+- **零常驻服务器**：执行在 GitHub Actions，前端 + 代理跑在 Cloudflare Workers 免费额度内
+- **不用填目标地址**：由源地址自动推导 SWR 路径，组织名可锁定防误改
+- **只同步需要的**：默认单 tag、可指定 CPU 架构（amd64 / arm64），避免误拉全量多架构镜像
+- **自动公开**：同步完成后自动把 SWR 仓库设为公开，直接 `docker pull` 可用
+- **看得见进度**：排队 / 执行中 / 每一步状态 / 成功失败，刷新不丢
+- **全局历史**：记录来自 GitHub Actions 运行记录，换设备也看得到，支持搜索与一键复制镜像名
 
-构建一个零常驻服务器成本的容器镜像同步系统，支持用户通过 Web 前端输入 Docker Hub / quay.io 的镜像地址，自动同步到**华为云 SWR**。同步执行引擎为 GitHub Actions 上的 `image-syncer`，触发入口为静态前端 + Serverless 代理。
+---
 
-## 2. 整体架构
+## 目录
+
+- [功能一览](#功能一览)
+- [工作原理](#工作原理)
+- [快速开始（使用者）](#快速开始使用者)
+- [自部署（开发者）](#自部署开发者)
+  - [0. 前置条件](#0-前置条件)
+  - [1. 准备华为云 SWR](#1-准备华为云-swr)
+  - [2. 准备 GitHub 仓库与 Secrets](#2-准备-github-仓库与-secrets)
+  - [3. 部署 Cloudflare Worker](#3-部署-cloudflare-worker)
+  - [4. 本地开发调试](#4-本地开发调试)
+  - [5. 验证](#5-验证)
+- [配置参考](#配置参考)
+- [API 参考](#api-参考)
+- [目录结构](#目录结构)
+- [常见问题](#常见问题)
+- [安全说明](#安全说明)
+
+---
+
+## 功能一览
+
+| 能力 | 说明 |
+|---|---|
+| 源地址 → 目标地址自动推导 | `docker.io/library/nginx:1.25.3` → `swr.<region>.myhuaweicloud.com/<org>/nginx:1.25.3` |
+| 单 tag / 多 tag / 全 tag | 源地址带 tag 默认只同步该 tag；也可传逗号分隔列表或 `all` |
+| 架构过滤 | `amd64`（默认）/ `arm64` / `all`，大幅减少传输量与耗时 |
+| 访问口令 | 登录后才能调用接口，口令存在 Worker Secret |
+| 实时进度 | 轮询 GitHub Actions 运行状态，展示到每个步骤 |
+| 自动公开 | 同步后调用 SWR API 设置 `is_public: true` |
+| 主题 | 亮色 / 暗色 / 跟随系统 |
+| 历史记录 | 全局（来自 Actions 运行记录），支持搜索、日期分组、复制 |
+
+---
+
+## 工作原理
 
 ```
-[静态前端 Static Frontend]
-        │  POST /api/sync  { source, destination, tags }
-        ▼
-[Serverless 代理 Serverless Proxy]
-        │  POST GitHub API /actions/workflows/{id}/dispatches
-        ▼
-[GitHub Actions Workflow]
-        │  workflow_dispatch inputs 动态生成 images.yaml
-        ▼
-[image-syncer]  ──拉取──▶ Docker Hub / quay.io
-                ──推送──▶ 华为云 SWR
+浏览器（静态页面 + 口令登录）
+   │  POST /api/sync { source, org, arch }
+   ▼
+Cloudflare Worker（校验参数 / 推导目标 / 触发工作流 / 查询进度）
+   │  POST /repos/{repo}/actions/workflows/sync-images.yml/dispatches
+   ▼
+GitHub Actions
+   │  1. 根据 inputs 生成 images.yaml
+   │  2. 下载 image-syncer 并执行（--arch 过滤）
+   │  3. 调用华为云 SWR API 把仓库设为公开
+   ▼
+华为云 SWR ←─ 拉取 Docker Hub / quay.io ←─ image-syncer
 ```
 
 职责边界：
-- **前端**：仅收集用户输入并调用代理接口，不持有任何凭证。
-- **代理**：持有 GitHub Fine-grained Token，做参数校验和转发，不接触云厂商凭证。
-- **Workflow**：持有 SWR 凭证（GitHub Secrets），实际执行同步。
 
-## 3. 技术栈
+- **前端**：只负责交互与展示，不含任何凭证
+- **Worker**：持有 GitHub Token 与访问口令，做校验、转发、进度查询
+- **Workflow**：持有 SWR 凭证（GitHub Secrets），实际执行同步
 
-| 层 | 选型 |
+---
+
+## 快速开始（使用者）
+
+1. 打开部署好的页面（形如 `https://image-sync-proxy.<你的子域>.workers.dev`）
+2. 输入访问口令登录
+3. 填源镜像地址，例如：
+   - `docker.io/library/nginx:1.25.3`
+   - `quay.io/prometheus/node-exporter:v1.7.0`
+4. 选择目标架构（与目标机器一致）
+5. 点「开始同步」，页面会实时显示进度与最终结果
+
+同步成功后即可拉取：
+
+```bash
+docker pull swr.cn-east-4.myhuaweicloud.com/ascend-sync/nginx:1.25.3
+```
+
+> 组织名默认锁定为 `ascend-sync`，需要改用其他组织时点输入框右侧的锁图标解锁。
+
+**地址规则**
+
+| 输入 | 目标 |
 |---|---|
-| 同步引擎 | `image-syncer` v1.5.5（workflow 中下载二进制直接运行，支持 `--arch` 过滤） |
-| CI/CD | GitHub Actions（`workflow_dispatch` 触发） |
-| 代理 | Cloudflare Worker（或 Vercel Edge Function，二选一） |
-| 前端 | 原生 HTML/JS 或 Vue 3 + Vite，部署到 Cloudflare Pages |
-| 认证 | GitHub Fine-grained Token + GitHub Secrets 存 SWR 凭证 |
+| `docker.io/library/nginx:1.25.3` | `<registry>/<org>/nginx:1.25.3` |
+| `docker.io/library/nginx` | `<registry>/<org>/nginx:latest` |
+| 任意镜像 + 自定义组织 `my-org` | `<registry>/my-org/<repo>:<tag>` |
 
-## 4. 仓库目录结构
+---
 
+## 自部署（开发者）
+
+### 0. 前置条件
+
+| 需要 | 说明 |
+|---|---|
+| GitHub 仓库 | 存放工作流与配置，Actions 免费额度足够 |
+| 华为云账号 | 已开通 SWR，创建一个组织（如 `ascend-sync`） |
+| Cloudflare 账号 | 部署 Worker + 静态页面（免费计划即可） |
+| 本地环境 | 可选：Node.js ≥ 22（本地调试用） |
+
+### 1. 准备华为云 SWR
+
+1. **创建组织**：SWR 控制台 → 组织管理 → 创建组织（如 `ascend-sync`）
+2. **长期登录指令**：SWR 控制台 → 系统管理 → 长期有效登录指令 → 生成，记下：
+   - 用户名（形如 `cn-east-4@XXXXXXXX`）→ `SWR_USERNAME`
+   - 密钥 → `SWR_PASSWORD`
+   > 不要用 24 小时临时登录指令，否则凭证过期后同步失败。
+3. **访问密钥（AK/SK）**：控制台 → 我的凭证 → 访问密钥，记下 Access Key / Secret Key → `SWR_AK` / `SWR_SK`
+4. **项目 ID**：控制台 → 我的凭证 → 项目列表 → 找到 `cn-east-4` 对应行 → `SWR_PROJECT_ID`
+
+### 2. 准备 GitHub 仓库与 Secrets
+
+Fork 或克隆本仓库，推送到自己的 GitHub 仓库。
+
+在仓库 **Settings → Secrets and variables → Actions** 添加：
+
+| Secret | 必填 | 用途 |
+|---|---|---|
+| `SWR_USERNAME` | ✅ | SWR 长期登录用户名（docker login 用） |
+| `SWR_PASSWORD` | ✅ | SWR 长期登录密钥 |
+| `SWR_AK` | ✅ | 调用 SWR API 把仓库设为公开 |
+| `SWR_SK` | ✅ | 同上 |
+| `SWR_PROJECT_ID` | ✅ | `cn-east-4` 项目 ID |
+| `SOURCE_DOCKERHUB_USER` / `_PASS` | ⬜ | 可选，私有镜像或规避 Docker Hub 匿名限流 |
+| `SOURCE_QUAY_USER` / `_PASS` | ⬜ | 可选，私有 Quay 镜像 |
+
+> 未配置 `SWR_AK/SK/PROJECT_ID` 时，「设为公开」步骤会自动跳过，不影响同步。
+
+**GitHub Token**（给 Worker 用）：创建一个 Fine-grained Token，权限如下：
+
+| 权限 | 级别 | 用途 |
+|---|---|---|
+| Contents | Read and write | 推送代码（仅部署时用） |
+| Actions | Read and write | 触发工作流、查询运行状态 |
+| Workflows | Read and write | 允许推送 `.github/workflows/` 变更 |
+
+### 3. 部署 Cloudflare Worker
+
+Worker 同时托管 `/api/*` 和 `web/` 静态页面（同源，无需 CORS）。
+
+```bash
+cd worker
+npx wrangler@latest deploy
 ```
-repo/
-├── .github/
-│   └── workflows/
-│       └── sync-images.yml        # 同步工作流
-├── auth.yaml                      # image-syncer 认证配置（引用环境变量）
-├── images.yaml                    # 默认同步规则（可被 workflow 覆盖生成）
-├── worker/
-│   └── index.js                   # Serverless 代理
-└── web/
-    ├── index.html                 # 前端页面
-    └── app.js                     # 前端逻辑
+
+首次部署会提示登录，或使用环境变量：
+
+```bash
+export CLOUDFLARE_API_TOKEN='...'      # Workers Scripts:Edit + Account Settings:Read
+export CLOUDFLARE_ACCOUNT_ID='...'
 ```
 
-## 5. 组件规格
+写入运行时配置（Secret）：
 
-### 5.1 Workflow：`.github/workflows/sync-images.yml`
+```bash
+npx wrangler@latest secret put GITHUB_REPO      # 例：yourname/dockerImageSync
+npx wrangler@latest secret put WORKFLOW_ID      # sync-images.yml
+npx wrangler@latest secret put GITHUB_TOKEN     # 上一步的 Fine-grained Token
+npx wrangler@latest secret put APP_PASSWORD     # 页面登录口令
+```
 
-**触发方式**：`workflow_dispatch`，接收四个 inputs。
+可选变量（`wrangler.toml` 的 `[vars]` 或同上传 secret 均可）：
 
-| input | 必填 | 类型 | 说明 |
-|---|---|---|---|
-| `source` | 是 | string | 源镜像地址，如 `docker.io/library/nginx:1.25.3` 或 `quay.io/prometheus/node-exporter:v1.7.0` |
-| `destination` | 是 | string | 目标镜像地址，如 `swr.cn-north-4.myhuaweicloud.com/your-org/nginx:1.25.3` |
-| `tags` | 否 | string | 逗号分隔的 tag 列表；留空时若源地址带 tag 则只同步该 tag（默认单 tag），源地址不带 tag 则同步全部；显式填 `all` 强制同步全部 |
-| `arch` | 否 | string | 同步架构：`amd64`（默认）/ `arm64` / `all`（多架构，体积大耗时长） |
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SWR_REGISTRY` | `swr.cn-east-4.myhuaweicloud.com` | 目标 Registry |
+| `SWR_ORG` | `ascend-sync` | 默认组织 |
+| `ALLOWED_ORIGIN` | `*` | 若前后端分开部署，限定前端域名 |
 
-**Jobs 步骤**：
-1. `actions/checkout@v4` 检出仓库。
-2. 运行 shell 脚本，根据 inputs **动态生成 `images.yaml`**：
-   - 若 `tags` 显式给出（非空且不为 `all`），对每个 tag 生成一条 `<source>:<tag> → <destination>:<tag>` 规则。
-   - 若 `tags` 为空且 `source` 自带 tag（如 `nginx:1.25.3`），只生成该单 tag 的同步规则（默认行为，避免误触发全量同步）。
-   - 若 `tags` 为空且 `source` 不带 tag，或 `tags=all`，规则写为 `"<source-without-tag>: <destination-without-tag>"`（全 tag 同步）。
-3. 下载 `image-syncer` 二进制并直接执行（不再通过 `hhyasdf/image-sync-action`，因为该 action 不暴露 `--arch` 参数）：
-   `./image-syncer --auth=./auth.yaml --images=./images.yaml --os=linux --arch=<arch> --proc=6 --retries=2`。
-   多架构镜像默认只同步 `amd64`，避免上传数倍数据（`nginx` 全平台约 500MB、近百个任务，跨境推送可能耗时数十分钟）。
-4. 在 `env` 中注入 Secrets：`SWR_USERNAME`、`SWR_PASSWORD`，以及可选的 Docker Hub / Quay 源端凭证（用于规避匿名拉取限流）。
-5. 同步成功后调用华为云 SWR API（[`UpdateRepo`](https://support.huaweicloud.com/intl/zh-cn/tr-central-201-api-swr/swr_02_0032.html)）把目标仓库设为**公开**：
-   `PUT /v2/manage/namespaces/{ns}/repos/{repo}`，body `{"is_public": true}`。
-   实现见 `scripts/make_repo_public.py`（使用 `SWR_AK` / `SWR_SK` / `SWR_PROJECT_ID`，未配置时自动跳过）。
-   可见性按仓库生效，因此新仓库第一次同步后设为公开，后续推新 tag 保持公开。
+部署完成后会输出访问地址，形如 `https://image-sync-proxy.<子域>.workers.dev`。
 
-**关键约束**：`auth.yaml` 固定来自仓库，不接受前端传入；工作流只覆盖 `images.yaml`。
+### 4. 本地开发调试
 
-### 5.2 认证文件：`auth.yaml`
+仓库自带一个复用同一套 Worker 逻辑的本地服务（Node 22，无框架）：
 
-以 Registry 域名为 key，value 含 `username` / `password`，值使用 `${ENV_VAR}` 占位符由环境变量注入。**仅保留华为云 SWR 段**，源端凭证按需添加：
+```bash
+cp local/.env.example local/.env
+# 编辑 local/.env，填入 GITHUB_REPO / WORKFLOW_ID / GITHUB_TOKEN / APP_PASSWORD
+
+set -a; . ./local/.env; set +a
+node local/server.mjs        # http://127.0.0.1:8787
+```
+
+它会托管 `web/` 并把 `/api/*` 交给 `worker/index.js` 处理，改代码后重启进程即可。
+
+### 5. 验证
+
+1. 打开页面，用 `APP_PASSWORD` 登录
+2. 提交一个公开镜像，例如 `docker.io/library/hello-world:latest`
+3. 到 GitHub Actions 查看运行，确认步骤全部通过
+4. 回到页面确认显示「同步成功」，SWR 控制台能看到镜像且为公开
+
+也可以直接调接口：
+
+```bash
+curl -s -X POST https://<worker>/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"password":"<口令>"}'
+
+curl -s https://<worker>/api/runs?limit=5 \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## 配置参考
+
+### Workflow inputs（`.github/workflows/sync-images.yml`）
+
+| input | 必填 | 说明 |
+|---|---|---|
+| `source` | ✅ | 源镜像地址，可带 tag |
+| `destination` | ✅ | 目标镜像地址（Worker 自动生成，一般无需手填） |
+| `tags` | ⬜ | 逗号分隔 tag；留空=按源地址 tag（无 tag 则全量）；`all`=强制全量 |
+| `arch` | ⬜ | `amd64`（默认）/ `arm64` / `all` |
+
+### Worker 环境变量
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `GITHUB_REPO` | ✅ | `owner/repo` |
+| `WORKFLOW_ID` | ✅ | `sync-images.yml` |
+| `GITHUB_TOKEN` | ✅ | Fine-grained Token（Contents / Actions / Workflows） |
+| `APP_PASSWORD` | ✅ | 页面访问口令（未配置时接口返回 500） |
+| `SWR_REGISTRY` | ⬜ | 目标 Registry，默认 `swr.cn-east-4.myhuaweicloud.com` |
+| `SWR_ORG` | ⬜ | 默认组织，默认 `ascend-sync` |
+| `ALLOWED_ORIGIN` | ⬜ | CORS 白名单，默认 `*` |
+
+### `auth.yaml`
+
+image-syncer 的认证文件，key 必须与镜像地址中的 **hostname 完全一致**（不带 `https://`、不带路径），值通过 `${ENV_VAR}` 注入：
 
 ```yaml
-swr.cn-north-4.myhuaweicloud.com:      # 替换为你的 SWR Registry 地址
+swr.cn-east-4.myhuaweicloud.com:
   username: ${SWR_USERNAME}
   password: ${SWR_PASSWORD}
-
-# 以下仅在同步私有源镜像时保留，公有镜像可删除
 docker.io:
   username: ${SOURCE_DOCKERHUB_USER}
   password: ${SOURCE_DOCKERHUB_PASS}
-quay.io:
-  username: ${SOURCE_QUAY_USER}
-  password: ${SOURCE_QUAY_PASS}
 ```
 
-**约束**：key 必须与镜像地址中的 hostname 完全一致（不带 `https://`、不带路径）。若只同步公有镜像，`auth.yaml` 可精简到只保留 SWR 一段。
+> 若目标区域不是 `cn-east-4`，必须同步修改这里的 key，否则认证失败。
 
-### 5.3 Serverless 代理：`worker/index.js`
+---
 
-**鉴权**：除 `POST /api/login` 外，所有接口都需要请求头 `Authorization: Bearer <token>`；令牌由 Worker 用 `APP_PASSWORD` 做 HMAC-SHA256 签名，有效期 7 天。
+## API 参考
 
-- `POST /api/login`，body `{ "password": string }` → `200 { ok, token, expires_at }` / `401 { error }`
-- `GET /api/session` → `200 { ok: true }`（校验令牌是否仍有效）/ `401`
-- 口令来自 Worker 环境变量 `APP_PASSWORD`；未配置时接口返回 500，避免无鉴权裸奔
+除 `/api/login` 外均需请求头 `Authorization: Bearer <token>`（登录后签发，7 天有效）。
 
-**接口**：`POST /api/sync`
-**请求体**：`{ "source": string, "org"?: string, "arch"?: "amd64"|"arm64"|"all" }`
-（兼容旧参数 `{ "destination": string, "tags": string }`，显式传 `destination` 时不再推导）
-**响应**：`200 { "ok": true, "run_id": number, "html_url": string, "destination": string, "arch": string }` / `400 { "error": string }` / `401 { error: string }` / `502 { "ok": false, "error": string }`
-
-**配置查询**：`GET /api/config`
-**响应**：`200 { "ok": true, "registry": string, "default_org": string, "default_arch": string }`（前端用于展示目标路径预览）
-
-**进度查询**：`GET /api/status?id=<run_id>`
-**响应**：`200 { "ok": true, "status": "queued|in_progress|completed", "conclusion": string, "html_url": string, "steps": [{ "name": string, "status": string, "conclusion": string }] }` / `400 / 404 / 502`
-
-**全局同步历史**：`GET /api/runs?limit=15`（需登录）
-**响应**：`200 { "ok": true, "runs": [{ "id": number, "title": string, "status": string, "conclusion": string, "created_at": string, "html_url": string }] }`
-标题取自 workflow 的 `run-name`（含「源镜像 → 目标镜像」），因此**所有浏览器、所有设备看到的是同一份历史**，数据源即 GitHub Actions 运行记录，无需额外存储。
-
-**逻辑**：
-1. `/api/sync` 仅接受 POST，`/api/status`、`/api/config` 仅接受 GET；其余返回 405。
-2. 校验 `source` 非空且可解析，否则 400。
-3. **自动推导目标地址**（前端只需填源地址）：`{SWR_REGISTRY}/{org}/{源最后一段仓库名}:{tag}`，其中 `tag` 取源地址中的 tag，缺省为 `latest`；`org` 取请求参数 `org`，缺省为 `SWR_ORG`（`ascend-sync`）。组织名非法返回 400。
-4. 从环境变量读取 `GITHUB_REPO`（`owner/repo`）、`WORKFLOW_ID`（文件名如 `sync-images.yml`）、`GITHUB_TOKEN`。
-5. 向 `https://api.github.com/repos/{repo}/actions/workflows/{workflowId}/dispatches` 发起 POST，body 为：
-   ```json
-   { "ref": "main", "inputs": { "source": "...", "destination": "<推导结果>", "tags": "" } }
-   ```
-   Header 必须含 `Authorization: Bearer <token>`、`Accept: application/vnd.github+json`、`X-GitHub-Api-Version: 2022-11-28`。
-6. 根据 GitHub 返回状态码映射响应，并设置 CORS 头 `Access-Control-Allow-Origin`（生产环境应限定为前端域名，可用 `ALLOWED_ORIGIN` 环境变量配置）。
-7. dispatch 成功后轮询最近运行列表，定位本次触发的 `run_id` 与 `html_url` 返回给前端；`/api/status` 按 `run_id` 查询运行状态与步骤，供前端展示实时进度。
-
-**Worker 环境变量**：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`、`APP_PASSWORD`；可选 `SWR_REGISTRY`（默认 `swr.cn-east-4.myhuaweicloud.com`）、`SWR_ORG`（默认 `ascend-sync`）、`ALLOWED_ORIGIN`。
-
-### 5.4 前端：`web/index.html` + `web/app.js`
-
-**页面元素**：访问口令登录页、源镜像输入框、目标组织输入框（默认 `ascend-sync`，**默认锁定**，点击锁形按钮解锁后可修改）、目标架构下拉框（`amd64` / `arm64` / `all`，默认 `amd64`）、目标路径实时预览（带 **复制** 按钮，一键复制完整镜像地址）、提交按钮、进度面板、最近同步列表（搜索 / 日期分组 / 复制 / 日志）、结果提示区、退出按钮、主题切换（亮色 / 暗色 / 跟随系统）。
-
-**行为**：
-1. 首屏要求输入访问口令；登录成功后令牌存 `localStorage`（key `imageSync.auth.v1`），之后所有请求自动带 `Authorization: Bearer`。
-2. 打开页面时用 `GET /api/session` 校验令牌，失效则回到登录页；任意接口返回 401 也会自动登出并提示重新登录。
-1. 提交时阻止默认表单行为，校验源镜像地址非空且可解析。
-2. 前端按与 Worker 相同的规则在本地预览目标路径（`GET /api/config` 获取 registry 与默认组织），用户无需填写目标地址。
-3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org, arch }) })`。
-4. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
-5. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
-6. 「最近同步」展示 `GET /api/runs` 拉到的**全局运行记录**（所有人共享，含状态、时间、日志链接，目标地址可一键复制）；接口异常时回退到本地缓存。
-7. 刷新后恢复上次同步进度：运行标识存 `localStorage`，刷新会重新拉取该 run 的状态（未结束则继续轮询）。
-7. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
-
-**约束**：前端代码中**不得出现任何 GitHub Token 或 SWR 凭证**。
-
-## 6. 凭证与配置清单
-
-| 存放位置 | 名称 | 用途 |
+| 方法 | 路径 | 说明 |
 |---|---|---|
-| GitHub Secrets | `SWR_USERNAME` | 华为云 SWR 长期登录用户名（`区域项目名@AK`，如 `cn-north-4@XXXXXXXX`） |
-| GitHub Secrets | `SWR_PASSWORD` | 华为云 SWR 长期登录密钥 |
-| GitHub Secrets | `SWR_AK` / `SWR_SK` | 可选，华为云访问密钥（用于调用 SWR API 把仓库设为公开） |
-| GitHub Secrets | `SWR_PROJECT_ID` | 可选，`cn-east-4` 区域项目 ID（与 AK/SK 配套） |
-| GitHub Secrets | `SOURCE_DOCKERHUB_USER` / `_PASS` | 可选，私有 Docker Hub 镜像 |
-| GitHub Secrets | `SOURCE_QUAY_USER` / `_PASS` | 可选，私有 Quay 镜像 |
-| Worker 环境变量 | `GITHUB_REPO` | `owner/repo` |
-| Worker 环境变量 | `WORKFLOW_ID` | `sync-images.yml` |
-| Worker 环境变量 | `GITHUB_TOKEN` | Fine-grained Token，需 Contents / Actions / Workflows 读写 |
-| Worker 环境变量 | `APP_PASSWORD` | 前端访问口令，登录后才能调用接口 |
-| Worker 环境变量 | `SWR_REGISTRY` | 可选，目标 SWR 域名，默认 `swr.cn-east-4.myhuaweicloud.com` |
-| Worker 环境变量 | `SWR_ORG` | 可选，默认目标组织，默认 `ascend-sync` |
-| 前端配置 | `PROXY_URL` | Worker 部署地址 |
+| `POST` | `/api/login` | `{password}` → `{ok, token, expires_at}` |
+| `GET` | `/api/session` | 校验令牌是否有效 |
+| `GET` | `/api/config` | 返回 registry / 默认组织 / 默认架构 |
+| `POST` | `/api/sync` | `{source, org?, arch?}` → `{ok, run_id, html_url, destination}` |
+| `GET` | `/api/status?id=` | 运行状态与步骤列表 |
+| `GET` | `/api/runs?limit=15` | 全局运行记录（标题含源/目标镜像） |
 
-## 7. 实施步骤
+错误响应统一为 `{ "error": "..." }`，状态码 `400 / 401 / 404 / 405 / 502`。
 
-1. 创建仓库，按第 4 节目录结构落盘所有文件。
-2. 在 GitHub 仓库 Secrets 中配置 `SWR_USERNAME` / `SWR_PASSWORD`（及可选的源端凭证）。
-3. **在 SWR 控制台预先创建目标组织（Organization）**，并获取长期有效登录指令中的用户名与密钥。
-4. 创建 GitHub Fine-grained Token（仅 Actions: Read & Write，限定单仓库），填入 Worker 环境变量。
-5. 部署 Worker（`wrangler deploy` 或 Vercel 控制台导入），配置三个环境变量。
-6. 部署前端到 Cloudflare Pages，配置 `PROXY_URL` 指向 Worker。
-7. 手动触发一次 workflow，验证 `images.yaml` 生成与同步结果。
-8. 通过前端页面触发一次，验证端到端链路。
+---
 
-## 8. 验收标准
+## 目录结构
 
-- [ ] 从前端页面只填 `source=docker.io/library/nginx:1.25.3`，自动同步到 `swr.cn-east-4.myhuaweicloud.com/ascend-sync/nginx:1.25.3`，Actions 出现新 run 并最终成功。
-- [ ] 前端修改目标组织（如 `my-org`）后，目标路径变为 `swr.../my-org/nginx:1.25.3`。
-- [ ] 传入不存在的源镜像时，workflow 失败并在日志中给出明确错误，前端收到“已触发”响应（触发成功与同步成败解耦）。
-- [ ] 前端源码与 Worker 源码中不包含任何 SWR AK/SK 或 GitHub Token 明文。
-- [ ] `tags` 留空且源地址带 tag 时，workflow 只同步该 tag；源地址不带 tag 时，生成全 tag 同步规则（源地址不含 tag）。
-- [ ] 重复触发同一镜像，`image-syncer` 日志显示 skipped 而非重复传输（增量同步生效）。
-- [ ] 直连 API 传入非 `swr.` 的 `destination` 时，代理返回 400 并提示“目标仓库仅支持华为云 SWR”。
-- [ ] 前端触发后可实时看到运行状态与步骤进度，完成后展示“同步成功/失败”结果。
+```
+.
+├── .github/workflows/sync-images.yml   # 同步工作流
+├── auth.yaml                           # image-syncer 认证（环境变量占位）
+├── images.yaml                         # 默认同步规则（运行时被覆盖）
+├── scripts/make_repo_public.py         # 同步后把 SWR 仓库设为公开
+├── worker/
+│   ├── index.js                        # Cloudflare Worker：鉴权 + 触发 + 查询
+│   ├── wrangler.toml                   # Worker 配置（含静态资源）
+│   └── package.json
+├── web/
+│   ├── index.html                      # 页面与样式（CSS 变量主题）
+│   └── app.js                          # 登录 / 表单 / 轮询 / 历史
+└── local/
+    ├── server.mjs                      # 本地开发服务（复用 Worker 逻辑）
+    └── .env.example                    # 本地环境变量模板
+```
 
-## 9. 注意事项（实现时必须遵守）
+---
 
-1. `auth.yaml` 中 SWR 的 Registry key 必须与镜像 URL hostname 逐字一致，否则认证失败。
-2. 华为云 SWR 的目标组织（Organization）需提前在控制台创建，否则推送报错。
-3. SWR 凭证使用**长期有效登录指令**（基于 AK/SK 生成），不要使用 24 小时临时登录指令，否则定时同步会在凭证过期后失败。
-4. GitHub Token 使用 Fine-grained Token，仅授予目标仓库的 Contents / Actions / Workflows 读写权限，禁止使用 classic token 或全权限 token。
-5. Worker 的 CORS 在生产环境应限定为前端实际域名，避免任意站点调用。
-6. 若使用 Vercel 替代 Cloudflare Worker，接口契约与请求体保持不变，仅部署方式和环境变量配置入口不同。
-7. 代理层对 `destination` 做 `swr.` 域名前缀校验，是低成本防止误推送至其他仓库的有效手段，建议保留。
-8. 访问口令鉴权只保护 API（静态页面本身是公开的，但页面不含任何凭证）。口令请用足够长度的随机串；如需更强防护（SSO、IP 白名单），可叠加 Cloudflare Access。
-9. 仓库被设为**公开**后，互联网上任何人可匿名拉取该镜像；涉及敏感内容的镜像请谨慎使用自动公开，或改为仅内网/VPC 访问。
+## 常见问题
 
+**同步很慢 / 卡在 image-syncer？**
+
+多架构镜像体积大（如 `nginx` 全平台约 500MB、近百个任务），跨境推送可能耗时很久。默认已限制 `amd64`；只有明确需要时才用 `all`。
+
+**日志显示 429 / 拉取失败？**
+
+Docker Hub 匿名拉取按 IP 限流（GitHub runner 共享出口）。配置 `SOURCE_DOCKERHUB_USER` / `_PASS`（只读 Access Token 即可）可缓解。
+
+**失败提示认证错误？**
+
+检查 `auth.yaml` 的 key 是否与目标 hostname 逐字一致；确认使用的是「长期有效登录指令」而非临时指令。
+
+**推送报 organization not found？**
+
+目标组织必须先在 SWR 控制台创建。
+
+**容器启动报 `exec format error`？**
+
+镜像架构与机器不符：ARM 机器（鲲鹏/昇腾）请选 `arm64`。
+
+**推送 GitHub 报 403？**
+
+Token 缺少 `Contents` 或 `Workflows` 权限；修改 fine-grained token 权限后重新推送。
+
+**页面提示「未登录或登录已过期」？**
+
+口令被修改过，或令牌超过 7 天，重新登录即可。
+
+**Cloudflare 返回 `error code: 1010`？**
+
+安全策略拦截了非常规 UA（如 Python `urllib`），与本站逻辑无关；用浏览器或 `curl` 访问即可。
+
+---
+
+## 安全说明
+
+- 前端与 Worker 源码中**不含**任何 SWR AK/SK 或 GitHub Token
+- `auth.yaml` 只保留环境变量占位符，真实凭证放在 GitHub Secrets
+- 页面访问口令建议使用 **16 位以上随机串**；改口令后所有已登录设备立即失效
+- 建议把 GitHub Token / Cloudflare Token 设为较短有效期并定期轮换
+- **公开镜像任何人可匿名拉取**：若镜像含敏感内容，请谨慎开启自动公开（可移除工作流中该步骤）
+- 生产环境如需更强防护，可在 Cloudflare 前叠加 Access（SSO / IP 白名单）
+
+---
+
+## License
+
+未指定，默认保留所有权利。如需开源请补充 LICENSE。
