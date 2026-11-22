@@ -121,6 +121,10 @@ quay.io:
 **进度查询**：`GET /api/status?id=<run_id>`
 **响应**：`200 { "ok": true, "status": "queued|in_progress|completed", "conclusion": string, "html_url": string, "steps": [{ "name": string, "status": string, "conclusion": string }] }` / `400 / 404 / 502`
 
+**全局同步历史**：`GET /api/runs?limit=15`（需登录）
+**响应**：`200 { "ok": true, "runs": [{ "id": number, "title": string, "status": string, "conclusion": string, "created_at": string, "html_url": string }] }`
+标题取自 workflow 的 `run-name`（含「源镜像 → 目标镜像」），因此**所有浏览器、所有设备看到的是同一份历史**，数据源即 GitHub Actions 运行记录，无需额外存储。
+
 **逻辑**：
 1. `/api/sync` 仅接受 POST，`/api/status`、`/api/config` 仅接受 GET；其余返回 405。
 2. 校验 `source` 非空且可解析，否则 400。
@@ -148,7 +152,8 @@ quay.io:
 3. `fetch(PROXY_URL + '/api/sync', { method: 'POST', body: JSON.stringify({ source, org, arch }) })`。
 4. 触发成功后若返回 `run_id`，每 8 秒轮询 `GET /api/status?id=<run_id>`，在进度面板展示整体状态（排队中/同步中/成功/失败）和各步骤状态，完成后给出明确结果提示；跟踪超时（60 分钟）则提示前往 Actions 查看。
 5. 若触发成功但未拿到 `run_id`，降级为“已触发，请前往 Actions 页面查看”。
-6. 进度与最近记录持久化在 `localStorage`：刷新页面后自动恢复上次同步状态（若仍未结束会继续轮询），并展示最近 10 条同步记录（含结果与日志链接），可一键清空。
+6. 「最近同步」展示 `GET /api/runs` 拉到的**全局运行记录**（所有人共享，含状态、时间、日志链接，目标地址可一键复制）；接口异常时回退到本地缓存。
+7. 刷新后恢复上次同步进度：运行标识存 `localStorage`，刷新会重新拉取该 run 的状态（未结束则继续轮询）。
 7. `PROXY_URL` 通过构建时注入或页面顶部常量配置，不硬编码在逻辑深处。
 
 **约束**：前端代码中**不得出现任何 GitHub Token 或 SWR 凭证**。
