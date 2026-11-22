@@ -293,6 +293,11 @@ function showResult(type, message) {
   resultDiv.textContent = message;
 }
 
+function clearResult() {
+  resultDiv.className = '';
+  resultDiv.textContent = '';
+}
+
 function setBadge(kind, text) {
   statusBadge.className = `badge ${kind}`;
   statusBadge.textContent = text;
@@ -711,12 +716,14 @@ async function pollStatus(runId, htmlUrl, destination) {
       return;
     }
 
-    if (!drawerIsOpen()) showBar('正在同步…');
-    showResult('loading', '正在同步，进度会自动更新…');
+    if (!drawerIsOpen()) showBar(text);
+    clearResult();
     pollTimer = setTimeout(() => pollStatus(runId, data.html_url || htmlUrl, destination), POLL_INTERVAL_MS);
   } catch (err) {
     pollTimer = setTimeout(() => pollStatus(runId, htmlUrl, destination), POLL_INTERVAL_MS * 2);
-    showResult('loading', `获取进度失败，稍后重试：${err.message}`);
+    const message = `获取进度失败，正在重试…`;
+    if (drawerIsOpen()) showResult('loading', message);
+    else showBar(message);
   }
 }
 
@@ -724,17 +731,17 @@ function startTracking(runId, htmlUrl, destination) {
   stopPolling();
   pollStartedAt = Date.now();
   trackingActive = true;
+  clearResult();
   openDrawer();
   stepList.innerHTML = '';
   setBadge('queued', '排队中');
   progressTitle.textContent = '同步进度';
   if (htmlUrl) runLink.href = htmlUrl;
   runLink.style.display = htmlUrl ? 'inline-block' : 'none';
-  showResult('loading', destination ? `已触发同步：${destination}` : '已触发同步，正在获取进度…');
   pollStatus(runId, htmlUrl, destination);
 }
 
-/** 刷新后恢复上次同步的进度（默认只显示角标，不主动弹出抽屉） */
+/** 刷新后恢复上次同步的进度（默认只显示状态条，不主动弹出抽屉） */
 async function restoreLastRun() {
   const last = loadLastRun();
   if (!last) return;
@@ -745,9 +752,6 @@ async function restoreLastRun() {
   if (last.htmlUrl) {
     runLink.href = last.htmlUrl;
     runLink.style.display = 'inline-block';
-  }
-  if (last.destination) {
-    showResult('loading', `上次同步：${last.destination}`);
   }
 
   trackingActive = true;
