@@ -42,6 +42,7 @@
   - [3. 部署 Cloudflare Worker](#3-部署-cloudflare-worker)
   - [4. 本地预览](#4-本地预览)
   - [5. 验证](#5-验证)
+  - [6. 部署检查清单](#6-部署检查清单)
 - [配置参考](#配置参考)
 - [API 参考](#api-参考)
 - [目录结构](#目录结构)
@@ -259,6 +260,34 @@ curl -s -X POST https://<worker>/api/login \
 curl -s https://<worker>/api/runs?limit=5 \
   -H "Authorization: Bearer <token>"
 ```
+
+### 6. 部署检查清单
+
+**GitHub 侧**
+
+- [ ] 仓库已推送，且 `.github/workflows/sync-images.yml` 在 `main` 分支上
+- [ ] Secrets 已配置：`SWR_USERNAME`、`SWR_PASSWORD`、`SWR_AK`、`SWR_SK`、`SWR_PROJECT_ID`
+- [ ] （可选）`SOURCE_DOCKERHUB_USER` / `SOURCE_DOCKERHUB_PASS`
+- [ ] Fine-grained PAT 具备 `Contents` / `Actions` / `Workflows` 读写
+
+**华为云侧**
+
+- [ ] 目标组织已创建（如 `ascend-sync`）
+- [ ] 使用的是**长期有效**登录指令，不是 24 小时临时指令
+- [ ] IAM 用户对 SWR 有写权限（否则「设为公开」会失败）
+- [ ] `auth.yaml` 的 key 与 `SWR_REGISTRY` 逐字一致
+
+**Cloudflare 侧**
+
+- [ ] Worker 部署成功，访问地址可打开
+- [ ] Secrets 已写入：`GITHUB_REPO`、`WORKFLOW_ID`、`GITHUB_TOKEN`、`APP_PASSWORD`
+- [ ] 未登录访问 `/api/config` 返回 401（说明鉴权生效）
+
+**端到端**
+
+- [ ] 网页能登录，能看到全局历史列表
+- [ ] 触发一次同步，Actions 运行中三个步骤状态正常
+- [ ] SWR 控制台能看到镜像；已公开的仓库可匿名 `docker pull`
 
 ---
 
