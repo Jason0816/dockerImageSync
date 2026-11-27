@@ -395,6 +395,16 @@ Docker Hub 匿名拉取按 IP 限流（GitHub runner 共享出口）。配置 `S
 
 镜像架构与机器不符：ARM 机器（鲲鹏/昇腾）请选 `arm64`。
 
+**架构选错了会怎样？**
+
+镜像没有你选的架构时，image-syncer 会跳过同步（日志 `no manifest fits`）并以 0 退出。工作流已显式检测这种情况：`Run image-syncer` 步骤会**失败**，Job Summary 里写明「镜像没有提供 amd64 平台的 manifest」，并提示切换架构。
+
+> 注意区分：**tag 不存在**会直接报错失败；**架构不匹配**原本是静默跳过，现已改为显式失败。
+
+**Actions 显示成功，但 SWR 里没有镜像？**
+
+先确认架构是否选对（见上条）。若架构正确，检查是否把镜像同步到了别的组织名（页面上组织默认锁定，解锁后改过要留意）。
+
 **推送 GitHub 报 403？**
 
 Token 缺少 `Contents` 或 `Workflows` 权限；修改 fine-grained token 权限后重新推送。

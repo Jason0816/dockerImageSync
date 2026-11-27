@@ -142,7 +142,33 @@ jobs:
             echo "Arch filter: all (multi-arch, slow)"
           fi
 
-          ./image-syncer "${ARGS[@]}"
+          # 保留输出用于判定「架构不匹配」，同时保留 image-syncer 的退出码
+          set +e
+          ./image-syncer "${ARGS[@]}" 2>&1 | tee syncer.log
+          syncer_status=${PIPESTATUS[0]}
+          set -e
+
+          # image-syncer 在「镜像没有匹配平台」时会跳过并以 0 退出，必须显式判定，
+          # 否则 Actions 显示成功但 SWR 里什么都没有。
+          if grep -q 'no manifest fits' syncer.log; then
+            skipped=$(grep -c 'no manifest fits' syncer.log || true)
+            {
+              echo "### ❌ 架构不匹配，已跳过同步"
+              echo ""
+              echo "镜像没有提供 **${ARCH}** 平台的 manifest，image-syncer 已跳过（共有 ${skipped} 条规则被跳过）。"
+              echo ""
+              echo "| 项 | 值 |"
+              echo "|---|---|"
+              echo "| 源镜像 | \`${{ github.event.inputs.source }}\` |"
+              echo "| 目标架构 | \`${ARCH}\` |"
+              echo ""
+              echo "**SWR 中不会出现对应镜像。** 该镜像实际支持的架构可用 \`docker manifest inspect <源镜像>\` 查看，然后在页面上把「目标架构」改成一致的值再重新触发。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=架构不匹配::镜像没有提供 ${ARCH} 平台的 manifest，已跳过同步（SWR 中不会有该镜像）。请切换目标架构后重试。"
+            exit 1
+          fi
+
+          exit "$syncer_status"
 
       - name: Set SWR repositories public
         if: success() && github.event.inputs.public != 'false'

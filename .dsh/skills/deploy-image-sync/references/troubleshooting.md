@@ -52,9 +52,17 @@ Multi-architecture image plus cross-border upload. `nginx:1.25.3` all-platform i
 
 Anonymous pulls are rate limited per IP, and hosted runners share IPs. Configure `SOURCE_DOCKERHUB_USER` / `SOURCE_DOCKERHUB_PASS` with a read-only Docker Hub token.
 
+**Run succeeds but nothing appears in SWR**
+
+The requested arch is not in the image. image-syncer logs `skip synchronization because no manifest fits` and exits 0. The workflow now detects this and fails the `Run image-syncer` step with an `架构不匹配` annotation; if a deployment still passes silently, its workflow is older than this fix. Verify the source image's platforms before re-running, then switch the arch. (A nonexistent tag fails differently: `generate ... failed` with `n tasks failed`.)
+
 **Container exits with `exec format error`**
 
 Image architecture does not match the host. Re-sync with `arch=arm64` on Kunpeng/Ascend ARM hosts.
+
+**Arch mismatch is a silent no-op in old workflow versions**
+
+Confirmed empirically: an arm64-only source with `arch=amd64` produced `Synchronization finished, 0 tasks failed` and a green run while SWR stayed empty. Do not reintroduce a bare `./image-syncer ...` invocation — keep the `tee syncer.log` capture plus the `no manifest fits` check, and preserve `PIPESTATUS[0]` so genuine failures still fail.
 
 **`Set SWR repositories public` step is red but the image synced**
 
