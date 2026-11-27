@@ -403,6 +403,17 @@ Docker Hub 匿名拉取按 IP 限流（GitHub runner 共享出口）。配置 `S
 
 目标组织必须先在 SWR 控制台创建。
 
+**同步失败提示「源镜像无法访问」？**
+
+最常见原因是**源地址少了 registry/命名空间**。只写 `名称:tag` 会按 Docker Hub 官方镜像解析：
+
+| 你填的 | 实际拉取 |
+|---|---|
+| `cann:8.3.rc1-910b-ubuntu22.04-py3.11` | `docker.io/library/cann:...` ❌ |
+| `quay.io/ascend/cann:8.3.rc1-910b-ubuntu22.04-py3.11` | 同上（正确）✅ |
+
+页面在检测到「未填写 registry」时会给出黄色提示并显示实际解析结果；工作流失败时也会在 Job Summary 里用中文写明分类（地址错误 / tag 不存在 / 限流 / 网络）。
+
 **容器启动报 `exec format error`？**
 
 镜像架构与机器不符：ARM 机器（鲲鹏/昇腾）请选 `arm64`。

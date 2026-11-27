@@ -42,6 +42,10 @@ const orgHint = document.getElementById('orgHint');
 const archChips = document.getElementById('archChips');
 const archError = document.getElementById('archError');
 const previewArch = document.getElementById('previewArch');
+const sourceResolveHint = document.getElementById('sourceResolveHint');
+const resolveTarget = document.getElementById('resolveTarget');
+const resolveToggle = document.getElementById('resolveToggle');
+const resolveDetail = document.getElementById('resolveDetail');
 const isPublicInput = document.getElementById('isPublic');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
@@ -361,9 +365,67 @@ function showArchError() {
   if (first) first.focus({ preventScroll: true });
 }
 
+/**
+ * 按 Docker 规则补全省略的 registry，返回 { resolved, implicit }。
+ * implicit 为 true 表示用户没写 registry，会被当成 Docker Hub 镜像。
+ */
+function resolveSource(source) {
+  const raw = String(source || '').trim();
+  if (!raw) return null;
+
+  let s = raw.split('@')[0];
+  const slash = s.lastIndexOf('/');
+  const colon = s.lastIndexOf(':');
+  let tag = '';
+  if (colon > slash) {
+    tag = s.slice(colon + 1);
+    s = s.slice(0, colon);
+  }
+
+  const parts = s.split('/').filter(Boolean);
+  if (!parts.length) return null;
+
+  const first = parts[0];
+  // 只有当存在多个路径段时，首段才可能是 registry；
+  // 单段名字里即便带点（如 8.3.rc1-xxx）也是镜像名，不是 registry。
+  const hasRegistry = parts.length > 1 && (first.includes('.') || first.includes(':') || first === 'localhost');
+  const implicit = !hasRegistry;
+  let resolved;
+  if (hasRegistry) resolved = parts.join('/');
+  else if (parts.length === 1) resolved = `docker.io/library/${parts[0]}`;
+  else resolved = `docker.io/${parts.join('/')}`;
+
+  return { resolved: resolved + (tag ? `:${tag}` : ''), implicit, repo: parts[parts.length - 1], tag };
+}
+
+/** 源地址缺失 registry 时给出非阻断提示：只显示一行解析结果，详情可展开 */
+function renderSourceHint() {
+  if (!sourceResolveHint) return;
+  const info = resolveSource(sourceInput.value);
+  const show = Boolean(info && info.implicit && sourceInput.value.trim());
+
+  sourceResolveHint.hidden = !show;
+  if (!show) {
+    if (resolveDetail) resolveDetail.hidden = true;
+    if (resolveToggle) {
+      resolveToggle.setAttribute('aria-expanded', 'false');
+      resolveToggle.textContent = '详情';
+    }
+    return;
+  }
+
+  if (resolveTarget) {
+    resolveTarget.textContent = info.resolved;
+    resolveTarget.title = info.resolved;
+  }
+  sourceResolveHint.title = `实际会拉取：${info.resolved}`;
+}
+
 function renderPreview() {
   const parsed = parseImage(sourceInput.value);
   const arch = selectedArch();
+
+  renderSourceHint();
 
   if (copyBtn) copyBtn.disabled = !parsed;
 
@@ -831,6 +893,15 @@ async function restoreLastRun() {
 
 sourceInput.addEventListener('input', renderPreview);
 orgInput.addEventListener('input', renderPreview);
+
+if (resolveToggle && resolveDetail) {
+  resolveToggle.addEventListener('click', () => {
+    const expanded = resolveToggle.getAttribute('aria-expanded') === 'true';
+    resolveDetail.hidden = expanded;
+    resolveToggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    resolveToggle.textContent = expanded ? '详情' : '收起';
+  });
+}
 
 if (archChips) {
   archChips.addEventListener('change', () => {

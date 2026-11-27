@@ -40,6 +40,10 @@ Only a warning; ignore unless the run itself fails.
 
 `auth.yaml` key does not match the destination hostname, or the SWR login secret is a temporary 24-hour instruction that has expired. Compare the key character by character with the registry host in `images.yaml`.
 
+**Sync fails with `requested access to the resource is denied`**
+
+Usually a malformed source address: a bare `name:tag` resolves to `docker.io/library/name`. Docker returns *denied* for both "missing" and "private", so the message is ambiguous. `scripts/classify_sync_failure.py` writes a Chinese classification into the job summary and prints the resolved pull address when the registry was omitted. Compare with `normalize_source()` in that script and with `resolveSource()` in `web/app.js`; the two must stay identical, and both treat a single-segment name (even one containing dots) as an image name, not a registry.
+
 **`organization not found`**
 
 The SWR organization was never created. Create it in the console first; the API cannot create it for you.

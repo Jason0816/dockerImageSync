@@ -239,7 +239,14 @@ jobs:
             exit 1
           fi
 
-          exit "$syncer_status"
+          # 非「架构不匹配」的失败：交给分类脚本输出中文原因（地址写错 / 不存在 / 限流 / 网络）
+          if [ "$syncer_status" != "0" ]; then
+            python3 scripts/classify_sync_failure.py --log "$LOG" \
+              --source "${{ github.event.inputs.source }}" --arch "$ARCH" || true
+            exit "$syncer_status"
+          fi
+
+          exit 0
 
       - name: Set SWR repositories public
         if: success() && github.event.inputs.public != 'false'

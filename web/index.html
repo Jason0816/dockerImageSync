@@ -288,6 +288,83 @@
 
     .hint { font-size: 0.72rem; color: var(--dim); margin-top: 0.3rem; }
 
+    /* 源地址缺失 registry 时的提示条（信息级，非阻断） */
+    .resolve-note {
+      margin-top: 0.45rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: 8px;
+      background: var(--steps-bg);
+      border: 1px solid var(--divider);
+      font-size: 0.73rem;
+      color: var(--muted);
+    }
+
+    .resolve-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      min-width: 0;
+    }
+
+    .resolve-icon {
+      flex: none;
+      width: 14px;
+      height: 14px;
+      color: var(--dim);
+    }
+
+    /* 单行展示，超长省略；hover 由 title 提供全文 */
+    .resolve-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.5;
+    }
+
+    .resolve-note code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.7rem;
+      color: var(--text-soft);
+      background: transparent;
+      padding: 0;
+      border: none;
+    }
+
+    .resolve-toggle {
+      flex: none;
+      width: auto;
+      min-height: 0;
+      margin: 0;
+      padding: 0 0.1rem;
+      background: none;
+      border: none;
+      color: var(--accent-text);
+      font-size: 0.7rem;
+      font-weight: 500;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+
+    .resolve-toggle:hover { text-decoration: underline; opacity: 1; }
+
+    .resolve-detail {
+      margin-top: 0.4rem;
+      padding-top: 0.4rem;
+      border-top: 1px dashed var(--divider);
+      font-size: 0.71rem;
+      line-height: 1.65;
+      color: var(--dim);
+    }
+
+    .resolve-detail code {
+      color: var(--text-soft);
+      padding: 0.02rem 0.25rem;
+      border-radius: 4px;
+      background: var(--input-bg);
+    }
+
     /* 目标组织：锁定 / 解锁 */
     .field-inline {
       display: flex;
@@ -804,7 +881,8 @@
       border: 1px dashed var(--preview-border);
       font-size: 0.78rem;
       color: var(--accent-text);
-      word-break: break-all;
+      /* 优先在 / 和 : 附近断行，避免把 tag 从中间劈开 */
+      overflow-wrap: anywhere;
       min-height: 2.3rem;
       line-height: 1.5;
       display: flex;
@@ -1247,6 +1325,19 @@
           <input type="text" id="source" name="source"
                  placeholder="docker.io/library/nginx:1.25.3" required />
           <div class="hint">支持 Docker Hub / quay.io；不带 tag 时默认按 latest 处理</div>
+          <div class="resolve-note" id="sourceResolveHint" hidden>
+            <div class="resolve-row">
+              <svg class="resolve-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 11v5.5M12 7.8v.2" />
+              </svg>
+              <span class="resolve-text">将按 Docker Hub 解析 · <code id="resolveTarget"></code></span>
+              <button type="button" class="resolve-toggle" id="resolveToggle"
+                      aria-expanded="false" aria-controls="resolveDetail">详情</button>
+            </div>
+            <div class="resolve-detail" id="resolveDetail" hidden>只写「名称:tag」时，Docker 会按 <code>docker.io/library/</code> 补全 registry 与命名空间。要同步第三方仓库的镜像，请写完整地址，例如 <code>quay.io/ascend/cann:8.5.0</code>。</div>
+          </div>
         </div>
 
         <div class="form-group">
