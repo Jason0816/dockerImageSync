@@ -529,6 +529,30 @@ function statusWord(conclusion) {
 
 let historyMode = 'local'; // 'global' 读 GitHub 运行记录；'local' 回退到本地缓存
 let globalRuns = [];
+let historyLoading = false; // 首次拉取全局记录期间的加载态
+
+// 全局记录的会话级快照：刷新时先渲染它，再后台校验更新（stale-while-revalidate）
+const RUNS_CACHE_KEY = 'imageSync.runsCache.v1';
+const RUNS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function readRunsCache() {
+  try {
+    const raw = sessionStorage.getItem(RUNS_CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.runs) || !data.runs.length) return null;
+    if (!data.fetchedAt || Date.now() - data.fetchedAt > RUNS_CACHE_TTL_MS) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function writeRunsCache(runs) {
+  try {
+    sessionStorage.setItem(RUNS_CACHE_KEY, JSON.stringify({ runs, fetchedAt: Date.now() }));
+  } catch { /* 隐私模式或配额不足时忽略 */ }
+}
 
 /** 按路径分隔符插入换行机会，避免把仓库名从中间劈开 */
 function appendWrapped(el, text) {
@@ -562,6 +586,7 @@ const STATUS_SVG = {
 };
 
 function statusKind(conclusion, status) {
+  if (status === 'unknown') return 'cancelled';
   if (status && status !== 'completed') return 'running';
   if (conclusion === 'success') return 'success';
   if (conclusion === 'failure') return 'failure';
@@ -572,9 +597,10 @@ function statusKind(conclusion, status) {
 /**
  * 元信息行里的状态文字。
  * 成功/失败由左侧彩色图标表达，不再重复文字；
- * 已取消 / 已跳过 / 进行中 文字仍有必要（灰色图标无法区分这几态）。
+ * 已取消 / 已跳过 / 进行中 / 状态未知 文字仍有必要（灰色图标无法区分这几态）。
  */
 function metaStatusText(conclusion, status) {
+  if (status === 'unknown') return '状态未知';
   if (status && status !== 'completed') return status === 'queued' ? '排队中' : '进行中';
   if (conclusion === 'cancelled') return '已取消';
   if (conclusion === 'skipped') return '已跳过';
@@ -740,11 +766,25 @@ function updateHistoryHint(count) {
 }
 
 function renderHistory() {
+  const countEl = document.getElementById('historyCount');
+
+  // 首次拉取全局记录时先显示加载态，避免先闪一版本地缓存
+  if (historyLoading) {
+    if (countEl) countEl.textContent = '…';
+    historyList.innerHTML = '';
+    const li = document.createElement('li');
+    li.className = 'hist-loading';
+    li.textContent = '正在加载最近同步…';
+    historyList.appendChild(li);
+    if (historyEmpty) historyEmpty.style.display = 'none';
+    if (historyHint) historyHint.classList.remove('visible');
+    return;
+  }
+
   const isGlobal = historyMode === 'global';
   const all = isGlobal ? globalRuns : loadHistory();
   const query = (historySearch && historySearch.value ? historySearch.value : '').trim().toLowerCase();
 
-  const countEl = document.getElementById('historyCount');
   if (countEl) countEl.textContent = String(all.length);
 
   const normalized = all.map((entry) => {
@@ -772,16 +812,20 @@ function renderHistory() {
     const localDur = entry.finishedAt && entry.startedAt
       ? Math.round((entry.finishedAt - entry.startedAt) / 1000)
       : null;
-    const dur = fmtDuration(localDur, entry.conclusion ? 'completed' : 'in_progress');
+    // 关闭页面导致没拿到结束状态的条目：超过 30 分钟就不再声称「进行中」
+    const stale = !entry.conclusion && entry.startedAt &&
+      (Date.now() - entry.startedAt > 30 * 60 * 1000);
+    const effStatus = entry.conclusion ? 'completed' : (stale ? 'unknown' : 'in_progress');
+    const dur = fmtDuration(localDur, effStatus);
     return {
       conclusion: entry.conclusion,
-      status: entry.conclusion ? 'completed' : 'in_progress',
+      status: effStatus,
       source: entry.source || '',
       destination: entry.destination || '',
       arch: entry.arch || '',
       duration: dur,
       text: label,
-      meta: [metaStatusText(entry.conclusion, entry.conclusion ? 'completed' : 'in_progress'),
+      meta: [metaStatusText(entry.conclusion, effStatus),
         fmtClock(entry.startedAt, dayBucket(entry.startedAt))].filter(Boolean).join(' · '),
       ts: entry.startedAt,
       url: entry.htmlUrl,
@@ -830,6 +874,7 @@ function renderHistory() {
 async function refreshHistory() {
   if (!getToken()) {
     historyMode = 'local';
+    historyLoading = false;
     renderHistory();
     return;
   }
@@ -841,8 +886,12 @@ async function refreshHistory() {
     if (!data.ok) throw new Error(data.error || 'bad response');
     globalRuns = data.runs || [];
     historyMode = 'global';
+    writeRunsCache(globalRuns);
   } catch {
-    historyMode = 'local';
+    // 已有会话快照时保留它，避免回退到更旧的本地缓存
+    if (!globalRuns.length) historyMode = 'local';
+  } finally {
+    historyLoading = false;
   }
   renderHistory();
 }
@@ -1258,15 +1307,25 @@ form.addEventListener('submit', async (e) => {
 /* ---------------- 初始化 ---------------- */
 
 async function boot() {
-  renderHistory();
-
   if (IS_FILE_PROTOCOL) {
+    renderHistory();
     showLogin(OPEN_HINT);
     return;
   }
 
   const token = getToken();
   if (token) {
+    // 有会话快照就先渲染（刷新零等待），后台再校验更新；没有则显示加载态
+    const cached = readRunsCache();
+    if (cached) {
+      globalRuns = cached.runs;
+      historyMode = 'global';
+      historyLoading = false;
+      renderHistory();
+    } else {
+      historyLoading = true;
+      renderHistory();
+    }
     try {
       const resp = await apiFetch('/api/session');
       if (resp.ok) {
@@ -1277,9 +1336,11 @@ async function boot() {
         return;
       }
     } catch { /* 网络异常则回到登录 */ }
+    historyLoading = false;
     clearToken();
   }
 
+  renderHistory();
   showLogin();
 }
 
