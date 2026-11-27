@@ -49,6 +49,7 @@
 - [目录结构](#目录结构)
 - [常见问题](#常见问题)
 - [安全说明](#安全说明)
+- [贡献与提交规范](#贡献与提交规范)
 
 ---
 
@@ -525,6 +526,18 @@ Token 缺少 `Contents` 或 `Workflows` 权限；修改 fine-grained token 权�
 - 建议把 GitHub Token / Cloudflare Token 设为较短有效期并定期轮换
 - **公开镜像任何人可匿名拉取**：若镜像含敏感内容，请谨慎开启自动公开（可移除工作流中该步骤）
 - 生产环境如需更强防护，可在 Cloudflare 前叠加 Access（SSO / IP 白名单）
+
+---
+
+## 贡献与提交规范
+
+改动本仓库前请先读 [`CONTRIBUTING.md`](CONTRIBUTING.md)，要点：
+
+- **提交信息一律英文**，格式 `<type>(<scope>): <subject>`，例如 `fix(worker): reject tokens whose role was tampered with`
+- 一次提交只做一件事；相邻的同类微调在推送前合并，避免 `fix typo` 刷屏
+- 改写历史后用 `--force-with-lease` 并显式指定期望的远程 SHA
+- 行为变了就同步 `README.md` 与 `.dsh/skills/deploy-image-sync/`
+- 文本文件统一 UTF-8 + LF；令牌只走 `wrangler secret` / GitHub Secrets
 
 ---
 
