@@ -145,7 +145,8 @@ curl -s "https://<worker-url>/api/runs?limit=5" -H "Authorization: Bearer $TOKEN
 - 必须用长期有效登录指令，不要用 24 小时临时指令。
 - 工作流里「设为公开」那步的条件是 `github.event.inputs.public != 'false'`，不要随手改结构。
 - `*.workers.dev` 在中国大陆经常无法直连（需要代理）。要公网可用就得规划自定义域名，见 `references/cloudflare.md`；不要把 workers.dev 地址当作国内稳定入口承诺给用户。
-- 多架构镜像很大（nginx 全平台约 500MB、近百个任务）。工作流默认 `arch=amd64`，只有用户确实需要多平台时才用 `all`。
+- 多架构镜像很大（nginx 全平台约 500MB、近百个任务）。网页上的「目标架构」**没有默认值、必填**，用户必须显式选择；工作流 input 的默认 `amd64` 只对直接调 API/手动 dispatch 生效。只有用户确实需要多平台时才用 `all`。
+- 架构与镜像提供的平台不匹配时，`Run image-syncer` 步骤会显式失败并提示「架构不匹配」，不要把它当成偶发故障。
 - 网页上的组织名默认是**锁定**状态，这是刻意设计；解锁要用户主动点。
 
 ## 出问题时

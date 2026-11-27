@@ -39,7 +39,9 @@ const sourceInput = document.getElementById('source');
 const orgInput = document.getElementById('org');
 const orgLockBtn = document.getElementById('orgLock');
 const orgHint = document.getElementById('orgHint');
-const archSelect = document.getElementById('arch');
+const archChips = document.getElementById('archChips');
+const archError = document.getElementById('archError');
+const previewArch = document.getElementById('previewArch');
 const isPublicInput = document.getElementById('isPublic');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
@@ -322,9 +324,59 @@ function parseImage(source) {
   return { repo, tag: tag || null };
 }
 
+const ARCH_LABELS = {
+  amd64: 'amd64',
+  arm64: 'arm64',
+  all: '全部平台',
+};
+
+/** 当前选中的架构，未选返回 '' */
+function selectedArch() {
+  const checked = document.querySelector('input[name="arch"]:checked');
+  return checked ? checked.value : '';
+}
+
+function setArch(value) {
+  document.querySelectorAll('input[name="arch"]').forEach((input) => {
+    input.checked = input.value === value;
+  });
+}
+
+function clearArchError() {
+  if (archChips) archChips.classList.remove('invalid');
+  if (archError) archError.classList.remove('visible');
+}
+
+function showArchError() {
+  if (archChips) {
+    archChips.classList.add('invalid');
+    // 重新触发动画
+    archChips.classList.remove('invalid');
+    void archChips.offsetWidth;
+    archChips.classList.add('invalid');
+    archChips.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  if (archError) archError.classList.add('visible');
+  const first = document.querySelector('input[name="arch"]');
+  if (first) first.focus({ preventScroll: true });
+}
+
 function renderPreview() {
   const parsed = parseImage(sourceInput.value);
+  const arch = selectedArch();
+
   if (copyBtn) copyBtn.disabled = !parsed;
+
+  if (previewArch) {
+    // 只有目标地址有效时才显示架构徽章，避免和占位文案并列产生噪音
+    if (arch && parsed) {
+      previewArch.textContent = ARCH_LABELS[arch] || arch;
+      previewArch.hidden = false;
+    } else {
+      previewArch.hidden = true;
+    }
+  }
+
   if (!parsed) {
     previewTarget.textContent = '填写源镜像地址后自动生成';
     return;
@@ -479,15 +531,26 @@ function buildHistoryItem({ icon, source, destination, text, meta, url, copyText
   return li;
 }
 
-/** 从 run 标题（Sync <源> → <目标>）解析出源与目标 */
+/** 从 run 标题（Sync <源> → <目标> [<架构>]）解析出源、目标与架构 */
 function parseRunTitle(title) {
   const raw = String(title || '').trim();
   const body = raw.replace(/^Sync\s+/i, '');
-  const idx = body.indexOf('→');
-  if (idx === -1) return { source: '', destination: '', text: raw };
+
+  // 末尾的 [amd64] / [arm64] / [all] 是工作流写入的架构标记
+  let arch = '';
+  const archMatch = body.match(/\s*\[(amd64|arm64|all)\]\s*$/i);
+  let trimmed = body;
+  if (archMatch) {
+    arch = archMatch[1].toLowerCase();
+    trimmed = body.slice(0, archMatch.index).trim();
+  }
+
+  const idx = trimmed.indexOf('→');
+  if (idx === -1) return { source: '', destination: '', arch, text: raw };
   return {
-    source: body.slice(0, idx).trim(),
-    destination: body.slice(idx + 1).trim(),
+    source: trimmed.slice(0, idx).trim(),
+    destination: trimmed.slice(idx + 1).trim(),
+    arch,
     text: raw,
   };
 }
@@ -520,16 +583,17 @@ function renderHistory() {
   const normalized = all.map((entry) => {
     if (isGlobal) {
       const parsed = parseRunTitle(entry.title);
+      const archLabel = parsed.arch ? `${ARCH_LABELS[parsed.arch] || parsed.arch} · ` : '';
       return {
         icon: HISTORY_ICONS[entry.conclusion] || '🔄',
         source: parsed.source,
         destination: parsed.destination,
         text: parsed.text || `运行 #${entry.id}`,
-        meta: `${statusWord(entry.conclusion)} · ${fmtTime(entry.created_at)}`,
+        meta: `${archLabel}${statusWord(entry.conclusion)} · ${fmtTime(entry.created_at)}`,
         ts: entry.created_at,
         url: entry.html_url,
         copyText: parsed.destination,
-        search: `${parsed.text} ${statusWord(entry.conclusion)} ${entry.id}`.toLowerCase(),
+        search: `${parsed.text} ${parsed.arch} ${statusWord(entry.conclusion)} ${entry.id}`.toLowerCase(),
       };
     }
     const label = entry.destination || entry.source || '未知镜像';
@@ -538,7 +602,7 @@ function renderHistory() {
       source: entry.source || '',
       destination: entry.destination || '',
       text: label,
-      meta: `${entry.arch ? `${entry.arch} · ` : ''}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`,
+      meta: `${entry.arch ? `${ARCH_LABELS[entry.arch] || entry.arch} · ` : ''}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`,
       ts: entry.startedAt,
       url: entry.htmlUrl,
       copyText: entry.destination || '',
@@ -618,7 +682,7 @@ async function loadConfig() {
       scrollInfo.registry = data.registry || FALLBACK_REGISTRY;
       scrollInfo.defaultOrg = data.default_org || FALLBACK_ORG;
       if (!orgInput.value.trim()) orgInput.value = scrollInfo.defaultOrg;
-      if (data.default_arch && archSelect) archSelect.value = data.default_arch;
+      // 刻意不预选架构：默认值会让用户以为系统已替他选好，导致漏选
       renderPreview();
     }
   } catch (err) {
@@ -767,6 +831,13 @@ async function restoreLastRun() {
 
 sourceInput.addEventListener('input', renderPreview);
 orgInput.addEventListener('input', renderPreview);
+
+if (archChips) {
+  archChips.addEventListener('change', () => {
+    clearArchError();
+    renderPreview();
+  });
+}
 
 /* ---------------- 复制镜像地址 ---------------- */
 
@@ -918,7 +989,7 @@ form.addEventListener('submit', async (e) => {
 
   const source = sourceInput.value.trim();
   const org = orgInput.value.trim();
-  const arch = archSelect.value || 'amd64';
+  const arch = selectedArch();
   const makePublic = isPublicInput ? isPublicInput.checked : true;
 
   if (!source) {
@@ -931,6 +1002,12 @@ form.addEventListener('submit', async (e) => {
     sourceInput.focus();
     return;
   }
+  if (!arch) {
+    showArchError();
+    showResult('error', '请先选择目标架构（不确定就在目标服务器执行 uname -m）');
+    return;
+  }
+  clearArchError();
 
   submitBtn.disabled = true;
   submitBtn.textContent = '触发中…';

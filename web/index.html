@@ -317,31 +317,7 @@
       background: var(--accent-soft-bg);
     }
 
-    /* 公开镜像开关 */
-    .switch-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      padding: 0.7rem 0.85rem;
-      border: 1px solid var(--input-border);
-      border-radius: 8px;
-      background: var(--input-bg);
-    }
-
-    .switch-text { min-width: 0; }
-
-    .switch-title {
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--text);
-      margin: 0;
-      text-transform: none;
-      letter-spacing: 0;
-    }
-
-    .switch-row .hint { margin-top: 0.25rem; }
-
+    /* 公开镜像开关（内联在预览区下方） */
     .switch {
       position: relative;
       flex: none;
@@ -389,6 +365,151 @@
     .switch input:checked + .track::after { transform: translateX(20px); }
 
     .switch input:focus-visible + .track { box-shadow: 0 0 0 3px var(--accent-soft-bg); }
+
+    /* ===== 必填标识 ===== */
+    .req { color: var(--err); font-weight: 700; margin-left: 0.1rem; }
+
+    /* ===== 架构单选组（chips） ===== */
+    .arch-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      border-radius: 10px;
+      transition: box-shadow 0.2s;
+    }
+
+    .arch-chips.invalid {
+      animation: chip-shake 0.4s ease;
+      box-shadow: 0 0 0 2px var(--err-border);
+    }
+
+    @keyframes chip-shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-6px); }
+      40% { transform: translateX(5px); }
+      60% { transform: translateX(-3px); }
+      80% { transform: translateX(2px); }
+    }
+
+    .chip {
+      flex: 1 1 30%;
+      min-width: 8.5rem;
+      cursor: pointer;
+      /* label 的全局样式（大写、字距、下边距）不适用于 chip */
+      margin: 0;
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 400;
+    }
+
+    .chip input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+
+    .chip-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+      padding: 0.5rem 0.7rem;
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      background: var(--input-bg);
+      transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    }
+
+    .chip:hover .chip-body { border-color: var(--accent); }
+
+    .chip input:checked + .chip-body {
+      border-color: var(--accent);
+      background: var(--accent-soft-bg);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    .chip input:focus-visible + .chip-body {
+      box-shadow: 0 0 0 3px var(--accent-soft-bg);
+    }
+
+    .chip-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.3;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    .chip input:checked + .chip-body .chip-name { color: var(--accent-text); }
+
+    .chip-desc {
+      font-size: 0.66rem;
+      color: var(--dim);
+      line-height: 1.3;
+      letter-spacing: normal;
+    }
+
+    /* ===== 字段错误提示 ===== */
+    .field-error {
+      display: none;
+      margin-top: 0.4rem;
+      font-size: 0.73rem;
+      color: var(--err);
+      line-height: 1.5;
+    }
+
+    .field-error.visible { display: block; }
+
+    .field-error code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.7rem;
+      padding: 0.05rem 0.25rem;
+      border-radius: 4px;
+      background: var(--steps-bg);
+    }
+
+    /* ===== 预览区架构徽章 + 元信息行 ===== */
+    .arch-badge {
+      flex: none;
+      font-size: 0.66rem;
+      font-weight: 600;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      border: 1px solid var(--accent-soft-border);
+      background: var(--accent-soft-bg);
+      color: var(--accent-text);
+      white-space: nowrap;
+    }
+
+    .preview-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: -0.7rem 0 1rem;
+      font-size: 0.74rem;
+      color: var(--muted);
+    }
+
+    .switch-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      cursor: pointer;
+      color: var(--text-soft);
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      margin: 0;
+      font-size: 0.78rem;
+    }
+
+    .switch-inline .switch { width: 38px; height: 21px; }
+    .switch-inline .switch .track::after { width: 15px; height: 15px; }
+    .switch-inline .switch input:checked + .track::after { transform: translateX(17px); }
+
+    .meta-hint { color: var(--faint); font-size: 0.7rem; }
 
     button {
       width: 100%;
@@ -1007,8 +1128,14 @@
 
       #result { font-size: 0.8rem; }
 
-      .switch-row { padding: 0.6rem 0.7rem; }
-      .switch-title { font-size: 0.8rem; }
+      /* 手机上 chip 占满整行，点击区域更大 */
+      .chip { flex: 1 1 100%; min-width: 0; }
+
+      .chip-body { flex-direction: row; align-items: baseline; gap: 0.5rem; }
+
+      .preview-meta { font-size: 0.72rem; }
+
+      .arch-badge { font-size: 0.62rem; }
     }
 
     /* 横屏矮窗口（手机横置） */
@@ -1128,33 +1255,54 @@
           <div class="hint" id="orgHint">SWR 组织名，默认 ascend-sync；已锁定，解锁后可修改</div>
         </div>
 
-        <div class="form-group">
-          <label for="arch">目标架构</label>
-          <select id="arch" name="arch">
-            <option value="amd64" selected>amd64（x86_64，常见服务器）</option>
-            <option value="arm64">arm64（鲲鹏 / 昇腾等 ARM 服务器）</option>
-            <option value="all">all（全部平台，体积大、耗时较长）</option>
-          </select>
-          <div class="hint">必须与目标机器架构一致，否则启动会报 exec format error</div>
-        </div>
-
-        <div class="form-group">
-          <div class="switch-row">
-            <div class="switch-text">
-              <div class="switch-title">公开镜像</div>
-              <div class="hint">开启后同步完成会自动设为公开，任何人可匿名拉取；关闭则保持私有</div>
-            </div>
-            <label class="switch" title="切换公开 / 私有">
-              <input type="checkbox" id="isPublic" checked />
-              <span class="track"></span>
+        <div class="form-group" id="archGroup">
+          <label id="archLabel">目标架构 <span class="req" aria-hidden="true">*</span></label>
+          <div class="arch-chips" id="archChips" role="radiogroup" aria-labelledby="archLabel"
+               aria-required="true" aria-describedby="archError">
+            <label class="chip">
+              <input type="radio" name="arch" value="amd64" />
+              <span class="chip-body">
+                <span class="chip-name">amd64</span>
+                <span class="chip-desc">x86_64 常见服务器</span>
+              </span>
+            </label>
+            <label class="chip">
+              <input type="radio" name="arch" value="arm64" />
+              <span class="chip-body">
+                <span class="chip-name">arm64</span>
+                <span class="chip-desc">鲲鹏 / 昇腾 / ARM</span>
+              </span>
+            </label>
+            <label class="chip">
+              <input type="radio" name="arch" value="all" />
+              <span class="chip-body">
+                <span class="chip-name">全部平台</span>
+                <span class="chip-desc">体积大，耗时较长</span>
+              </span>
             </label>
           </div>
+          <div class="field-error" id="archError" role="alert">
+            请选择目标架构（不确定就在目标服务器执行 <code>uname -m</code>）
+          </div>
+          <div class="hint">必须与目标机器架构一致，否则启动会报 exec format error</div>
         </div>
 
         <div class="preview" id="preview">
           <span class="k">将同步至：</span>
           <span id="previewTarget">填写源镜像地址后自动生成</span>
+          <span class="arch-badge" id="previewArch" hidden></span>
           <button type="button" id="copyBtn" class="copy-btn" title="复制镜像地址">复制</button>
+        </div>
+
+        <div class="preview-meta">
+          <label class="switch-inline" title="开启后同步完成会自动设为公开，任何人可匿名拉取">
+            <span>公开镜像</span>
+            <span class="switch">
+              <input type="checkbox" id="isPublic" checked />
+              <span class="track"></span>
+            </span>
+          </label>
+          <span class="meta-hint">关闭则保持私有</span>
         </div>
 
         <button type="submit" id="submitBtn">开始同步</button>

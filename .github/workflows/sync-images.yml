@@ -1,5 +1,5 @@
 name: Sync Container Images
-run-name: Sync ${{ inputs.source }} → ${{ inputs.destination }}
+run-name: Sync ${{ inputs.source }} → ${{ inputs.destination }} [${{ inputs.arch || 'amd64' }}]
 
 on:
   workflow_dispatch:
