@@ -331,8 +331,8 @@ function parseImage(source) {
 const ARCH_LABELS = {
   amd64: 'amd64',
   arm64: 'arm64',
-  'amd64+arm64': 'amd64 + arm64',
-  all: 'amd64 + arm64',
+  'amd64+arm64': 'amd64+arm64',
+  all: 'amd64+arm64',
 };
 
 /** 当前选中的架构，未选返回 '' */
@@ -458,13 +458,6 @@ const STEP_ICONS = {
   queued: '⏳',
 };
 
-const HISTORY_ICONS = {
-  success: '✅',
-  failure: '❌',
-  cancelled: '⚪',
-  skipped: '⏭️',
-};
-
 function renderSteps(steps) {
   stepList.innerHTML = '';
   (steps || []).forEach((step) => {
@@ -494,6 +487,38 @@ function fmtTime(ts) {
   }
 }
 
+/**
+ * 元信息行的时间：当天/昨天只显示时钟（分组标题已表达日期），
+ * 更早的记录补上 MM-DD，避免看不出是哪天。
+ */
+function fmtClock(ts, bucket) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (bucket === '更早') {
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${mo}-${day} ${hh}:${mm}`;
+  }
+  return `${hh}:${mm}`;
+}
+
+/** 秒 → 人类可读耗时：45s / 3m20s / 1h02m */
+function fmtDuration(seconds, status) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '';
+  const total = Math.max(0, Math.round(Number(seconds)));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return `${m}m${s > 0 ? String(s).padStart(2, '0') + 's' : ''}`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  const suffix = status === 'in_progress' ? '+' : '';
+  return `${h}h${String(mm).padStart(2, '0')}m${suffix}`;
+}
+
 function statusWord(conclusion) {
   if (conclusion === 'success') return '成功';
   if (conclusion === 'failure') return '失败';
@@ -517,13 +542,64 @@ function appendWrapped(el, text) {
   });
 }
 
-function buildHistoryItem({ icon, source, destination, text, meta, url, copyText }) {
+/** 目标地址去掉 registry 前缀，只保留 org/repo:tag（复制时仍用完整地址） */
+function shortDest(destination) {
+  const d = String(destination || '').trim();
+  if (!d) return '';
+  const parts = d.split('/');
+  const first = parts[0] || '';
+  const looksLikeRegistry = first.includes('.') || first.includes(':');
+  if (parts.length >= 3 && looksLikeRegistry) return parts.slice(1).join('/');
+  return d;
+}
+
+/** 状态图标：用 SVG 代替 emoji，跨平台渲染一致 */
+const STATUS_SVG = {
+  success: '<circle cx="8" cy="8" r="6.4"/><path d="M4.9 8.2l2.2 2.2 4-4.2"/>',
+  failure: '<circle cx="8" cy="8" r="6.4"/><path d="M5.7 5.7l4.6 4.6M10.3 5.7l-4.6 4.6"/>',
+  cancelled: '<circle cx="8" cy="8" r="6.4"/><path d="M5.2 8h5.6"/>',
+  running: '<circle cx="8" cy="8" r="6.4" opacity="0.3"/><path class="arc" d="M8 1.6a6.4 6.4 0 016.4 6.4"/>',
+};
+
+function statusKind(conclusion, status) {
+  if (status && status !== 'completed') return 'running';
+  if (conclusion === 'success') return 'success';
+  if (conclusion === 'failure') return 'failure';
+  if (conclusion === 'cancelled' || conclusion === 'skipped') return 'cancelled';
+  return 'running';
+}
+
+/**
+ * 元信息行里的状态文字。
+ * 成功/失败由左侧彩色图标表达，不再重复文字；
+ * 已取消 / 已跳过 / 进行中 文字仍有必要（灰色图标无法区分这几态）。
+ */
+function metaStatusText(conclusion, status) {
+  if (status && status !== 'completed') return status === 'queued' ? '排队中' : '进行中';
+  if (conclusion === 'cancelled') return '已取消';
+  if (conclusion === 'skipped') return '已跳过';
+  return '';
+}
+
+function createStatusIcon(conclusion, status) {
+  const kind = statusKind(conclusion, status);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', `hist-svg hist-svg--${kind}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', statusWord(conclusion));
+  svg.innerHTML = STATUS_SVG[kind];
+  return svg;
+}
+
+/** 左栏只放状态图标；架构与耗时移到元信息行右侧 */
+function buildHistoryItem({ conclusion, status, source, destination, text, meta, url, copyText, arch, duration }) {
   const li = document.createElement('li');
   li.className = 'hist-item';
 
-  const iconEl = document.createElement('span');
-  iconEl.className = 'hist-icon';
-  iconEl.textContent = icon;
+  const rail = document.createElement('div');
+  rail.className = 'hist-rail';
+  rail.appendChild(createStatusIcon(conclusion, status));
 
   const body = document.createElement('div');
   body.className = 'hist-body';
@@ -535,15 +611,18 @@ function buildHistoryItem({ icon, source, destination, text, meta, url, copyText
     src.className = 'hist-src';
     appendWrapped(src, source);
 
-    const arrow = document.createElement('div');
-    arrow.className = 'hist-arrow';
-    arrow.textContent = '↓';
-
     const dst = document.createElement('div');
     dst.className = 'hist-dst';
-    appendWrapped(dst, destination);
+    // 箭头内联到目标行首；文字放进独立 span，换行时能对齐到箭头右侧
+    const arrow = document.createElement('span');
+    arrow.className = 'hist-arrow';
+    arrow.textContent = '→';
+    const dstText = document.createElement('span');
+    dstText.className = 'hist-dst-text';
+    appendWrapped(dstText, shortDest(destination));
+    dst.append(arrow, dstText);
 
-    title.append(src, arrow, dst);
+    title.append(src, dst);
     title.title = `${source} → ${destination}`;
   } else {
     title.textContent = text;
@@ -552,7 +631,32 @@ function buildHistoryItem({ icon, source, destination, text, meta, url, copyText
 
   const metaEl = document.createElement('div');
   metaEl.className = 'hist-meta';
-  metaEl.textContent = meta;
+
+  const metaText = document.createElement('span');
+  metaText.className = 'hist-meta-text';
+  metaText.textContent = meta;
+  metaEl.appendChild(metaText);
+
+  const archLabel = arch ? (ARCH_LABELS[arch] || arch) : '';
+  if (duration || archLabel) {
+    const dataEl = document.createElement('span');
+    dataEl.className = 'hist-data';
+    if (duration) {
+      const durEl = document.createElement('span');
+      durEl.className = 'hist-dur';
+      durEl.textContent = duration;
+      durEl.title = `耗时 ${duration}`;
+      dataEl.appendChild(durEl);
+    }
+    if (archLabel) {
+      const archEl = document.createElement('span');
+      archEl.className = 'hist-arch';
+      archEl.textContent = archLabel;
+      archEl.title = `目标架构：${archLabel}`;
+      dataEl.appendChild(archEl);
+    }
+    metaEl.appendChild(dataEl);
+  }
 
   const actions = document.createElement('div');
   actions.className = 'hist-actions';
@@ -589,7 +693,7 @@ function buildHistoryItem({ icon, source, destination, text, meta, url, copyText
 
   body.append(title, metaEl);
   if (actions.childNodes.length) body.appendChild(actions);
-  li.append(iconEl, body);
+  li.append(rail, body);
 
   return li;
 }
@@ -646,13 +750,17 @@ function renderHistory() {
   const normalized = all.map((entry) => {
     if (isGlobal) {
       const parsed = parseRunTitle(entry.title);
-      const archLabel = parsed.arch ? `${ARCH_LABELS[parsed.arch] || parsed.arch} · ` : '';
+      const dur = fmtDuration(entry.duration_seconds, entry.status);
       return {
-        icon: HISTORY_ICONS[entry.conclusion] || '🔄',
+        conclusion: entry.conclusion,
+        status: entry.status,
         source: parsed.source,
         destination: parsed.destination,
+        arch: parsed.arch,
+        duration: dur,
         text: parsed.text || `运行 #${entry.id}`,
-        meta: `${archLabel}${statusWord(entry.conclusion)} · ${fmtTime(entry.created_at)}`,
+        meta: [metaStatusText(entry.conclusion, entry.status), fmtClock(entry.created_at, dayBucket(entry.created_at))]
+          .filter(Boolean).join(' · '),
         ts: entry.created_at,
         url: entry.html_url,
         copyText: parsed.destination,
@@ -660,12 +768,21 @@ function renderHistory() {
       };
     }
     const label = entry.destination || entry.source || '未知镜像';
+    // 本地缓存的历史：用 startedAt / finishedAt 计算
+    const localDur = entry.finishedAt && entry.startedAt
+      ? Math.round((entry.finishedAt - entry.startedAt) / 1000)
+      : null;
+    const dur = fmtDuration(localDur, entry.conclusion ? 'completed' : 'in_progress');
     return {
-      icon: HISTORY_ICONS[entry.conclusion] || '🔄',
+      conclusion: entry.conclusion,
+      status: entry.conclusion ? 'completed' : 'in_progress',
       source: entry.source || '',
       destination: entry.destination || '',
+      arch: entry.arch || '',
+      duration: dur,
       text: label,
-      meta: `${entry.arch ? `${ARCH_LABELS[entry.arch] || entry.arch} · ` : ''}${statusWord(entry.conclusion)} · ${fmtTime(entry.startedAt)}`,
+      meta: [metaStatusText(entry.conclusion, entry.conclusion ? 'completed' : 'in_progress'),
+        fmtClock(entry.startedAt, dayBucket(entry.startedAt))].filter(Boolean).join(' · '),
       ts: entry.startedAt,
       url: entry.htmlUrl,
       copyText: entry.destination || '',

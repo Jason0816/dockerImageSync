@@ -419,6 +419,14 @@ async function handleStatus(env, url) {
 /**
  * 全局同步历史：读取该仓库最近的工作流运行
  */
+function durationBetween(startIso, endIso) {
+  if (!startIso || !endIso) return null;
+  const a = Date.parse(startIso);
+  const b = Date.parse(endIso);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  return Math.round((b - a) / 1000);
+}
+
 async function handleRuns(env, url) {
   if (!env.GITHUB_REPO || !env.GITHUB_TOKEN) {
     return jsonResponse(env, { error: 'Server misconfiguration' }, 500);
@@ -437,6 +445,7 @@ async function handleRuns(env, url) {
     }
 
     const data = await resp.json();
+    const now = Date.now();
     const runs = (data.workflow_runs || [])
       .filter((r) => r.path === `.github/workflows/${env.WORKFLOW_ID}`)
       .slice(0, limit)
@@ -446,6 +455,9 @@ async function handleRuns(env, url) {
         status: r.status,
         conclusion: r.conclusion,
         created_at: r.created_at,
+        // 耗时：已完成用 updated_at，进行中用当前时间
+        duration_seconds: durationBetween(r.run_started_at || r.created_at,
+          r.status === 'completed' ? r.updated_at : new Date(now).toISOString()),
         html_url: r.html_url,
       }));
 

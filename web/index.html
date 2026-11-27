@@ -745,7 +745,8 @@
 
     .hist-item {
       display: flex;
-      gap: 0.55rem;
+      align-items: flex-start;
+      gap: 0.45rem;
       padding: 0.55rem 0.55rem 0.5rem;
       border-radius: 9px;
       background: var(--item-bg);
@@ -755,7 +756,70 @@
 
     .hist-item:hover { background: var(--item-hover); border-color: var(--item-border); }
 
-    .hist-icon { flex: none; font-size: 0.8rem; line-height: 1.35; }
+    /* 左栏：只放状态图标，与首行文字对齐 */
+    .hist-rail {
+      flex: none;
+      width: 1rem;
+      padding-top: 0.1rem;
+      display: flex;
+      justify-content: center;
+    }
+
+    .hist-svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .hist-svg--success { color: var(--ok); }
+    .hist-svg--failure { color: var(--err); }
+    .hist-svg--cancelled { color: var(--faint); }
+    .hist-svg--running { color: var(--info); }
+
+    .hist-svg--running .arc {
+      transform-origin: 8px 8px;
+      animation: hist-spin 1.1s linear infinite;
+    }
+
+    @keyframes hist-spin { to { transform: rotate(360deg); } }
+
+    /* 元信息行：左侧状态+时间，右侧耗时+架构 */
+    .hist-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-top: 0.2rem;
+      font-size: 0.68rem;
+      color: var(--dim);
+      min-width: 0;
+    }
+
+    .hist-meta-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hist-data {
+      flex: none;
+      margin-left: auto;
+      padding-left: 0.45rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    .hist-dur { font-variant-numeric: tabular-nums; }
+
+    .hist-arch { color: var(--faint); }
 
     .hist-body { min-width: 0; flex: 1; }
 
@@ -765,17 +829,21 @@
     }
 
     .hist-src { color: var(--text-soft); overflow-wrap: anywhere; }
-    .hist-dst { color: var(--accent-text); overflow-wrap: anywhere; }
-    .hist-arrow { color: var(--faint); font-size: 0.66rem; line-height: 1.25; margin: 0.08rem 0; }
 
-    .hist-meta {
-      margin-top: 0.2rem;
-      font-size: 0.68rem;
-      color: var(--dim);
+    /* 目标行：箭头 + 文字两列，换行时文字对齐到箭头右侧 */
+    .hist-dst {
       display: flex;
-      align-items: center;
-      gap: 0.45rem;
-      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.28rem;
+      color: var(--accent-text);
+    }
+
+    .hist-dst-text { min-width: 0; overflow-wrap: anywhere; }
+
+    .hist-arrow {
+      flex: none;
+      color: var(--faint);
+      font-size: 0.7rem;
     }
 
     .hist-actions { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
@@ -1383,7 +1451,7 @@
               <input type="radio" name="arch" value="all" />
               <span class="chip-body">
                 <span class="chip-name">全部平台</span>
-                <span class="chip-desc">amd64 + arm64</span>
+                <span class="chip-desc">amd64+arm64</span>
               </span>
             </label>
           </div>
