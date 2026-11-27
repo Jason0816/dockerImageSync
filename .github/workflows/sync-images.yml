@@ -1,5 +1,5 @@
 name: Sync Container Images
-run-name: Sync ${{ inputs.source }} → ${{ inputs.destination }} [${{ inputs.arch || 'amd64' }}]
+run-name: Sync ${{ inputs.source }} → ${{ inputs.destination }} [${{ inputs.arch == 'all' && 'amd64+arm64' || (inputs.arch || 'amd64') }}]
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
         type: string
         default: ''
       arch:
-        description: '同步的 CPU 架构：amd64 / arm64 / all（默认 amd64；all 会同步全部平台，体积大、耗时长）'
+        description: '同步的 CPU 架构：amd64 / arm64 / all（全部平台 = 仅 amd64 + arm64）'
         required: false
         type: string
         default: 'amd64'
@@ -140,12 +140,19 @@ jobs:
           chmod +x image-syncer
 
           ARGS=(--auth=./auth.yaml --images=./images.yaml --os=linux --proc=6 --retries=2)
-          if [ "$ARCH" != "all" ]; then
-            ARGS+=(--arch="$ARCH")
-            echo "Arch filter: $ARCH"
-          else
-            echo "Arch filter: all (multi-arch, slow)"
-          fi
+          # --arch 是 stringArray，可传多个。
+          # 「全部平台」(all) 只同步 amd64 + arm64，不同步 386/ppc64le/riscv64/s390x 等，
+          # 因为这些平台在华为云 SWR 场景基本用不到，全量会显著拖慢同步。
+          case "$ARCH" in
+            all)
+              ARGS+=(--arch=amd64 --arch=arm64)
+              echo "Arch filter: amd64 + arm64 (全部平台仅这两个)"
+              ;;
+            *)
+              ARGS+=(--arch="$ARCH")
+              echo "Arch filter: $ARCH"
+              ;;
+          esac
 
           # 无进展判定阈值（分钟）。注意：单个超大层（如 4GB）正常传输可能需要 20 分钟
           # 而没有新日志，所以阈值必须留足余量，默认 30 分钟。

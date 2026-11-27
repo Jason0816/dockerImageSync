@@ -331,7 +331,8 @@ function parseImage(source) {
 const ARCH_LABELS = {
   amd64: 'amd64',
   arm64: 'arm64',
-  all: '全部平台',
+  'amd64+arm64': 'amd64 + arm64',
+  all: 'amd64 + arm64',
 };
 
 /** 当前选中的架构，未选返回 '' */
@@ -600,7 +601,7 @@ function parseRunTitle(title) {
 
   // 末尾的 [amd64] / [arm64] / [all] 是工作流写入的架构标记
   let arch = '';
-  const archMatch = body.match(/\s*\[(amd64|arm64|all)\]\s*$/i);
+  const archMatch = body.match(/\s*\[(amd64\+arm64|amd64|arm64|all)\]\s*$/i);
   let trimmed = body;
   if (archMatch) {
     arch = archMatch[1].toLowerCase();

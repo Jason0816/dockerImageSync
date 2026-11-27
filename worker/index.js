@@ -235,7 +235,7 @@ function buildDestination(env, source, orgRaw) {
 function normalizeArch(arch) {
   const value = (arch && String(arch).trim().toLowerCase()) || DEFAULT_ARCH;
   if (!ALLOWED_ARCHS.has(value)) {
-    throw new Error('不支持的架构，可选：amd64 / arm64 / all');
+    throw new Error('不支持的架构，可选：amd64 / arm64 / all（all = amd64 + arm64）');
   }
   return value;
 }

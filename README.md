@@ -10,7 +10,7 @@
 
 - **零常驻服务器**：执行在 GitHub Actions，前端 + 代理跑在 Cloudflare Workers 免费额度内
 - **不用填目标地址**：由源地址自动推导 SWR 路径，组织名可锁定防误改
-- **只同步需要的**：默认单 tag、可指定 CPU 架构（amd64 / arm64），避免误拉全量多架构镜像
+- **只同步需要的**：默认单 tag、按需选择 CPU 架构（amd64 / arm64 / 全部平台即双架构），避免误拉全量多架构镜像
 - **自动公开**：同步完成后自动把 SWR 仓库设为公开，直接 `docker pull` 可用
 - **看得见进度**：排队 / 执行中 / 每一步状态 / 成功失败，刷新不丢
 - **全局历史**：记录来自 GitHub Actions 运行记录，换设备也看得到，支持搜索与一键复制镜像名
@@ -58,12 +58,13 @@
 |---|---|
 | 源地址 → 目标地址自动推导 | `docker.io/library/nginx:1.25.3` → `swr.<region>.myhuaweicloud.com/<org>/nginx:1.25.3` |
 | 单 tag / 多 tag / 全 tag | 源地址带 tag 默认只同步该 tag；也可传逗号分隔列表或 `all` |
-| 架构过滤 | `amd64`（默认）/ `arm64` / `all`，大幅减少传输量与耗时 |
+| 架构过滤 | `amd64` / `arm64` / `all`（**全部平台 = 只同步 amd64 + arm64**），大幅减少传输量与耗时；**网页上必选、无默认值**，避免漏选。
 | 访问口令 | 登录后才能调用接口，口令存在 Worker Secret |
-| 实时进度 | 轮询 GitHub Actions 运行状态，在右侧抽屉中展示到每个步骤；可关闭，右下角角标可重新打开 |
+| 实时进度 | 轮询 GitHub Actions 运行状态，在右侧抽屉中展示到每个步骤；关闭后表单下方出现「查看进度」状态条，点击可重新打开 |
 | 自动公开 | 同步后调用 SWR API 设置 `is_public: true`，可在页面上关闭 |
 | 主题 | 亮色 / 暗色 / 跟随系统 |
-| 历史记录 | 全局（来自 Actions 运行记录），支持搜索、日期分组、复制 |
+| 历史记录 | 全局（来自 Actions 运行记录），支持搜索、日期分组、显示架构、复制镜像名 |
+| 地址预检 | 源地址未写 registry 时提示「将按 Docker Hub 解析为 …」，避免把 quay.io 镜像误当官方镜像 |
 
 ---
 
@@ -99,8 +100,9 @@ GitHub Actions
 3. 填源镜像地址，例如：
    - `docker.io/library/nginx:1.25.3`
    - `quay.io/prometheus/node-exporter:v1.7.0`
-4. **选择目标架构（必填，没有默认值）**：`amd64 (x86_64)` / `arm64 (鲲鹏/昇腾)` / `全部平台`。
+4. **选择目标架构（必填，没有默认值）**：`amd64 (x86_64)` / `arm64 (鲲鹏/昇腾)` / `全部平台（= amd64 + arm64）`。
    不确定就在目标服务器执行 `uname -m`：`x86_64` → amd64，`aarch64` → arm64。
+   「全部平台」只同步 amd64 与 arm64 两个常用架构，不会同步 386 / ppc64le / riscv64 / s390x 等。
    未选择时无法提交，会红框高亮并提示。
 5. 「公开镜像」开关默认开启（关闭则同步后不自动设为公开），位于预览行下方
 6. 点「开始同步」，页面会实时显示进度与最终结果
@@ -303,7 +305,7 @@ curl -s https://<worker>/api/runs?limit=5 \
 | `source` | ✅ | 源镜像地址，可带 tag |
 | `destination` | ✅ | 目标镜像地址（Worker 自动生成，一般无需手填） |
 | `tags` | ⬜ | 逗号分隔 tag；留空=按源地址 tag（无 tag 则全量）；`all`=强制全量 |
-| `arch` | ⬜ | `amd64`（默认）/ `arm64` / `all` |
+| `arch` | ⬜ | `amd64` / `arm64` / `all`。**网页上必选无默认值**；`all` 表示「全部平台 = 仅 amd64 + arm64」（实现上等价于 `--arch amd64 --arch arm64`），不会同步 386/ppc64le/riscv64/s390x。仅当直接调用 API 或手动 dispatch 且不传该参数时，工作流才回落到 `amd64` |
 | `public` | ⬜ | 同步后是否设为公开，默认 `true`；`false` 时跳过该步骤 |
 | `stall_timeout` | ⬜ | 无进展判定阈值（分钟），默认 `30`。连续这么久没有新层完成就自动终止 |
 
@@ -344,7 +346,7 @@ docker.io:
 |---|---|---|
 | `POST` | `/api/login` | `{password}` → `{ok, token, expires_at}` |
 | `GET` | `/api/session` | 校验令牌是否有效 |
-| `GET` | `/api/config` | 返回 registry / 默认组织 / 默认架构 |
+| `GET` | `/api/config` | 返回 registry / 默认组织（`default_arch` 仅供展示，前端不会自动选中架构） |
 | `POST` | `/api/sync` | `{source, org?, arch?, public?}` → `{ok, run_id, html_url, destination}` |
 | `GET` | `/api/status?id=` | 运行状态与步骤列表 |
 | `GET` | `/api/runs?limit=15` | 全局运行记录（标题含源/目标镜像） |
