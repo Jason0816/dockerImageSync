@@ -35,11 +35,12 @@
 - [工作原理](#工作原理)
 - [快速开始（使用者）](#快速开始使用者)
 - [自部署（开发者）](#自部署开发者)
+  - [Agent 辅助部署（DSH Skill）](#agent-辅助部署dsh-skill)
   - [0. 前置条件](#0-前置条件)
   - [1. 准备华为云 SWR](#1-准备华为云-swr)
   - [2. 准备 GitHub 仓库与 Secrets](#2-准备-github-仓库与-secrets)
   - [3. 部署 Cloudflare Worker](#3-部署-cloudflare-worker)
-  - [4. 本地开发调试](#4-本地开发调试)
+  - [4. 本地预览](#4-本地预览)
   - [5. 验证](#5-验证)
 - [配置参考](#配置参考)
 - [API 参考](#api-参考)
@@ -119,6 +120,24 @@ docker pull swr.cn-east-4.myhuaweicloud.com/ascend-sync/nginx:1.25.3
 ---
 
 ## 自部署（开发者）
+
+> **想让 Agent 帮你部署？** 仓库内置了一个 DSH Skill：`.dsh/skills/deploy-image-sync/`。
+> 在 DeepSeek Harness 中打开本仓库后，直接说「帮我部署这个项目」即可——
+> Agent 会自动加载该技能，按步骤向你索取凭证、配置 Secrets、部署 Worker 并逐项验证。
+> 技能里还带了 `references/`（Cloudflare、华为云、排障手册），遇到报错时可让 Agent 查对应条目。
+
+### Agent 辅助部署（DSH Skill）
+
+技能文件位置：`.dsh/skills/deploy-image-sync/SKILL.md`（DSH 会自动发现 `<项目根>/.dsh/skills/` 下的技能）。
+
+| 文件 | 内容 |
+|---|---|
+| `SKILL.md` | 部署主流程：中文交互规则、需收集的 8 项输入、6 个步骤、必须遵守的约束 |
+| `references/cloudflare.md` | Worker 部署、secret 写入、自定义域名的限制、验证命令 |
+| `references/huaweicloud.md` | 三类凭证的区别、区域对齐、设为公开的原理与匿名验证 |
+| `references/troubleshooting.md` | 真实报错对照表（403/422、认证失败、多架构超时、1010 等） |
+
+使用方式：在项目目录下启动会话，说「部署 dockerImageSync」或「这个项目怎么部署」，Agent 会加载技能并按流程推进。它会在动手前**逐项确认凭证**，而不是猜默认值；**全程用中文与你交互**，每次只问一组信息，改动前先说明要做什么。
 
 ### 0. 前置条件
 
@@ -200,19 +219,28 @@ npx wrangler@latest secret put APP_PASSWORD     # 页面登录口令
 
 部署完成后会输出访问地址，形如 `https://image-sync-proxy.<子域>.workers.dev`。
 
-### 4. 本地开发调试
+### 4. 本地预览
 
-仓库自带一个复用同一套 Worker 逻辑的本地服务（Node 22，无框架）：
+Worker 自带 `wrangler dev`，可以在本地起同一套逻辑（API + 静态页面）：
 
 ```bash
-cp local/.env.example local/.env
-# 编辑 local/.env，填入 GITHUB_REPO / WORKFLOW_ID / GITHUB_TOKEN / APP_PASSWORD
-
-set -a; . ./local/.env; set +a
-node local/server.mjs        # http://127.0.0.1:8787
+cd worker
+npx wrangler@latest dev
 ```
 
-它会托管 `web/` 并把 `/api/*` 交给 `worker/index.js` 处理，改代码后重启进程即可。
+本地同样需要 `GITHUB_REPO` / `WORKFLOW_ID` / `GITHUB_TOKEN` / `APP_PASSWORD`，用一次性 `.dev.vars` 提供（**不要提交**）：
+
+```bash
+cd worker
+cat > .dev.vars <<'EOF'
+GITHUB_REPO=owner/repo
+WORKFLOW_ID=sync-images.yml
+GITHUB_TOKEN=github_pat_xxx
+APP_PASSWORD=your-password
+EOF
+```
+
+`wrangler dev` 会读取 `.dev.vars`，改代码后自动热重载。
 
 ### 5. 验证
 
@@ -296,6 +324,9 @@ docker.io:
 
 ```
 .
+├── .dsh/skills/deploy-image-sync/      # 部署技能（Agent 辅助自部署）
+│   ├── SKILL.md
+│   └── references/                     # cloudflare / huaweicloud / troubleshooting
 ├── .github/workflows/sync-images.yml   # 同步工作流
 ├── auth.yaml                           # image-syncer 认证（环境变量占位）
 ├── images.yaml                         # 默认同步规则（运行时被覆盖）
@@ -307,9 +338,8 @@ docker.io:
 ├── web/
 │   ├── index.html                      # 页面与样式（CSS 变量主题）
 │   └── app.js                          # 登录 / 表单 / 轮询 / 历史
-└── local/
-    ├── server.mjs                      # 本地开发服务（复用 Worker 逻辑）
-    └── .env.example                    # 本地环境变量模板
+├── docs/                               # 界面截图
+└── LICENSE
 ```
 
 ---

@@ -1,6 +1,7 @@
-# 本地/临时部署产物，不提交
-local/
+# 本地 / 临时产物，不提交
 .env
+.dev.vars
+local/
 *.log
 __pycache__/
 *.pyc
