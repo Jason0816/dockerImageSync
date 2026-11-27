@@ -46,7 +46,16 @@ The SWR organization was never created. Create it in the console first; the API 
 
 **Sync hangs for tens of minutes, `Run image-syncer` never finishes**
 
-Multi-architecture image plus cross-border upload. `nginx:1.25.3` all-platform is ~93 tasks / ~500 MB; individual layers can stall for tens of minutes after rate limiting. This is why the workflow pins `--arch amd64` and skips the `image-syncer-action` wrapper (that action exposes no arch input). Do not "fix" it by raising timeouts.
+Two different causes, do not conflate them:
+
+1. **Legitimately slow**: cross-border upload measures ~3–4 MB/s in practice, so a 6.7 GB image takes ~18–20 minutes. image-syncer logs only when a layer *completes*, so one 4 GB layer produces a long silent gap. Measurements that sum every "Finish synchronizing blob" line overstate throughput, because most of those lines are *skipped* layers.
+2. **Actually stalled**: the connection dies without an error. The workflow now runs a watchdog: if no new layer completes within `stall_timeout` minutes (default 30), it kills the process, fails the step with `同步无进展`, and says completed layers are kept so a rerun resumes.
+
+Raise `stall_timeout` only when a single layer genuinely exceeds 10 GB on a slow link. A watchdog false positive wastes a rerun, so keep the default above the worst observed single-layer time (4.25 GB ≈ 20 min).
+
+Do not "fix" slowness by removing the arch pin: multi-architecture sync multiplies the data.
+
+**Multi-arch images are large** (nginx all-platform ≈ 500 MB / ~90 tasks). `all` is opt-in for a reason.
 
 **Frequent 429 / slow pulls from Docker Hub**
 

@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: 'true'
+      stall_timeout:
+        description: '无进展判定阈值（分钟）：连续这么久没有新层完成就自动终止（默认 30；超大镜像可调大）'
+        required: false
+        type: string
+        default: '30'
 
 jobs:
   sync:
@@ -142,16 +147,82 @@ jobs:
             echo "Arch filter: all (multi-arch, slow)"
           fi
 
-          # 保留输出用于判定「架构不匹配」，同时保留 image-syncer 的退出码
+          # 无进展判定阈值（分钟）。注意：单个超大层（如 4GB）正常传输可能需要 20 分钟
+          # 而没有新日志，所以阈值必须留足余量，默认 30 分钟。
+          STALL_MINUTES="${{ github.event.inputs.stall_timeout }}"
+          if ! [[ "${STALL_MINUTES:-}" =~ ^[0-9]+$ ]] || [ "${STALL_MINUTES:-0}" -lt 5 ]; then
+            STALL_MINUTES=30
+          fi
+          echo "无进展判定阈值: ${STALL_MINUTES} 分钟"
+
+          LOG=syncer.log
+          : > "$LOG"
+
           set +e
-          ./image-syncer "${ARGS[@]}" 2>&1 | tee syncer.log
-          syncer_status=${PIPESTATUS[0]}
+          ./image-syncer "${ARGS[@]}" >> "$LOG" 2>&1 &
+          SYNC_PID=$!
+          tail -n +1 -f "$LOG" 2>/dev/null &
+          TAIL_PID=$!
+
+          last_size=-1
+          last_change=$(date +%s)
+          last_beat=0
+          stalled=0
+
+          while kill -0 "$SYNC_PID" 2>/dev/null; do
+            sleep 15
+            size=$(stat -c%s "$LOG" 2>/dev/null || echo 0)
+            now=$(date +%s)
+            if [ "$size" != "$last_size" ]; then
+              last_size=$size
+              last_change=$now
+              last_beat=0
+              continue
+            fi
+            idle=$(( (now - last_change) / 60 ))
+            if [ "$idle" -ge "$STALL_MINUTES" ]; then
+              stalled=1
+              break
+            fi
+            if [ "$idle" -gt "$last_beat" ] && [ $(( idle % 5 )) -eq 0 ]; then
+              last_beat=$idle
+              echo "… 已 ${idle} 分钟没有新层完成（阈值 ${STALL_MINUTES} 分钟），仍在传输中"
+            fi
+          done
+
+          if [ "$stalled" = "1" ]; then
+            kill -TERM "$SYNC_PID" 2>/dev/null
+            sleep 5
+            kill -KILL "$SYNC_PID" 2>/dev/null
+          fi
+          wait "$SYNC_PID"
+          syncer_status=$?
+          kill "$TAIL_PID" 2>/dev/null
+          wait "$TAIL_PID" 2>/dev/null
           set -e
+
+          if [ "$stalled" = "1" ]; then
+            {
+              echo "### ❌ 同步无进展，已自动终止"
+              echo ""
+              echo "连续 **${STALL_MINUTES} 分钟**没有任何新层完成，判定为传输卡死（与镜像大小无关，是链路停住）。"
+              echo ""
+              echo "| 项 | 值 |"
+              echo "|---|---|"
+              echo "| 源镜像 | \`${{ github.event.inputs.source }}\` |"
+              echo "| 阈值 | ${STALL_MINUTES} 分钟 |"
+              echo ""
+              echo "**已完成的层会保留在 SWR 中**，直接重跑会跳过它们、只补剩余的层。"
+              echo "若确认是超大镜像（单层超过 10GB）本身传输慢，可在手动触发时把 \`stall_timeout\` 调大。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=同步无进展::连续 ${STALL_MINUTES} 分钟无新层完成，已终止。已完成的层会保留，可直接重跑。"
+            exit 1
+          fi
 
           # image-syncer 在「镜像没有匹配平台」时会跳过并以 0 退出，必须显式判定，
           # 否则 Actions 显示成功但 SWR 里什么都没有。
-          if grep -q 'no manifest fits' syncer.log; then
-            skipped=$(grep -c 'no manifest fits' syncer.log || true)
+          if grep -q 'no manifest fits' "$LOG"; then
+            skipped=$(grep -c 'no manifest fits' "$LOG" || true)
             {
               echo "### ❌ 架构不匹配，已跳过同步"
               echo ""
