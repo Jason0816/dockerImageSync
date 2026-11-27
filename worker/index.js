@@ -88,6 +88,7 @@ function timingSafeEqual(a, b) {
 }
 
 async function hmacKey(env) {
+  // 用 APP_PASSWORD 作为签名密钥；改口令即让所有令牌失效
   return crypto.subtle.importKey(
     'raw',
     encoder.encode(env.APP_PASSWORD),
@@ -103,21 +104,25 @@ async function signPayload(env, payload) {
   return base64url(sig);
 }
 
-async function issueToken(env) {
+/** 令牌格式：v1.<role>.<exp>.<sig>，role 由签名保护，无法伪造 */
+async function issueToken(env, role = 'user') {
   const exp = Date.now() + AUTH_TTL_MS;
-  const payload = `v1.${exp}`;
+  const payload = `v1.${role}.${exp}`;
   const sig = await signPayload(env, payload);
-  return { token: `${payload}.${sig}`, expires_at: new Date(exp).toISOString() };
+  return { token: `${payload}.${sig}`, expires_at: new Date(exp).toISOString(), role };
 }
 
 async function verifyToken(env, token) {
-  if (!token || typeof token !== 'string') return false;
+  if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
-  if (parts.length !== 3 || parts[0] !== 'v1') return false;
-  const exp = Number(parts[1]);
-  if (!Number.isFinite(exp) || Date.now() > exp) return false;
-  const expected = await signPayload(env, `v1.${exp}`);
-  return timingSafeEqual(parts[2], expected);
+  if (parts.length !== 4 || parts[0] !== 'v1') return null;
+  const [, role, expRaw, sig] = parts;
+  if (role !== 'user' && role !== 'admin') return null;
+  const exp = Number(expRaw);
+  if (!Number.isFinite(exp) || Date.now() > exp) return null;
+  const expected = await signPayload(env, `v1.${role}.${exp}`);
+  if (!timingSafeEqual(sig, expected)) return null;
+  return { role, exp };
 }
 
 function bearerToken(request) {
@@ -127,16 +132,27 @@ function bearerToken(request) {
 }
 
 /**
- * 校验登录态；通过返回 null，否则返回错误响应
+ * 校验登录态；通过返回 null，否则返回错误响应。
+ * requireAdmin 为 true 时还要求 role === 'admin'。
  */
-async function requireAuth(request, env) {
+async function requireAuth(request, env, { requireAdmin = false } = {}) {
   if (!env.APP_PASSWORD) {
     return jsonResponse(env, { error: '服务端未配置访问口令（APP_PASSWORD）' }, 500);
   }
-  if (!(await verifyToken(env, bearerToken(request)))) {
+  const payload = await verifyToken(env, bearerToken(request));
+  if (!payload) {
     return jsonResponse(env, { error: '未登录或登录已过期' }, 401);
   }
+  if (requireAdmin && payload.role !== 'admin') {
+    return jsonResponse(env, { error: '需要管理员权限' }, 403);
+  }
   return null;
+}
+
+/** 当前请求的角色，供 /api/session 返回 */
+async function currentRole(request, env) {
+  const payload = await verifyToken(env, bearerToken(request));
+  return payload ? payload.role : null;
 }
 
 async function handleLogin(request, env) {
@@ -156,13 +172,224 @@ async function handleLogin(request, env) {
     return jsonResponse(env, { error: '请输入访问口令' }, 400);
   }
 
-  if (!timingSafeEqual(password, env.APP_PASSWORD)) {
+  // 先比管理员口令（若已配置），再比普通口令
+  let role = null;
+  if (env.ADMIN_PASSWORD && timingSafeEqual(password, env.ADMIN_PASSWORD)) {
+    role = 'admin';
+  } else if (timingSafeEqual(password, env.APP_PASSWORD)) {
+    role = 'user';
+  }
+
+  if (!role) {
     await sleep(300); // 轻微延迟，降低暴力破解速度
     return jsonResponse(env, { error: '口令错误' }, 401);
   }
 
-  const { token, expires_at } = await issueToken(env);
-  return jsonResponse(env, { ok: true, token, expires_at });
+  const { token, expires_at } = await issueToken(env, role);
+  return jsonResponse(env, { ok: true, token, expires_at, role });
+}
+
+/* ---------------- D1 同步索引 ---------------- */
+
+/** 从完整目标地址拆出 registry / org / repo / tag，用于高效查询 */
+function splitDestination(destination) {
+  const d = String(destination || '').trim();
+  if (!d) return { registry: null, org: null, repo: null, tag: null };
+
+  let rest = d;
+  const slash = rest.lastIndexOf('/');
+  const colon = rest.lastIndexOf(':');
+  let tag = null;
+  if (colon > slash) {
+    tag = rest.slice(colon + 1);
+    rest = rest.slice(0, colon);
+  }
+  const parts = rest.split('/').filter(Boolean);
+  const first = parts[0] || '';
+  const hasRegistry = parts.length >= 3 && (first.includes('.') || first.includes(':'));
+  if (!hasRegistry) {
+    return {
+      registry: null,
+      org: parts.length >= 2 ? parts[0] : null,
+      repo: parts[parts.length - 1] || null,
+      tag,
+    };
+  }
+  return {
+    registry: first,
+    org: parts[1] || null,
+    repo: parts[2] || null,
+    tag,
+  };
+}
+
+/** 触发成功后写入一条（幂等：同一 run_id 重复写入则更新） */
+async function recordSyncStart(env, { runId, source, destination, arch, createdAt }) {
+  if (!env.DB || !runId) return;
+  const { registry, org, repo, tag } = splitDestination(destination);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO syncs (run_id, source, destination, registry, org, repo, tag, arch, conclusion, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9)
+       ON CONFLICT(run_id) DO UPDATE SET
+         source = excluded.source,
+         destination = excluded.destination,
+         registry = excluded.registry,
+         org = excluded.org,
+         repo = excluded.repo,
+         tag = excluded.tag,
+         arch = excluded.arch`
+    ).bind(runId, source, destination, registry, org, repo, tag, arch, createdAt).run();
+  } catch (err) {
+    console.error('recordSyncStart failed:', err && err.message);
+  }
+}
+
+/** 运行结束后补结论与耗时 */
+async function recordSyncFinish(env, runId, conclusion, durationSeconds, finishedAt) {
+  if (!env.DB || !runId) return;
+  try {
+    await env.DB.prepare(
+      `UPDATE syncs SET conclusion = ?2, duration_seconds = ?3, finished_at = ?4
+       WHERE run_id = ?1`
+    ).bind(runId, conclusion, durationSeconds, finishedAt).run();
+  } catch (err) {
+    console.error('recordSyncFinish failed:', err && err.message);
+  }
+}
+
+/** 搜索历史索引；includeDeleted 仅管理员可用（审计已删除记录） */
+async function handleSearch(env, url, { isAdmin = false } = {}) {
+  if (!env.DB) {
+    return jsonResponse(env, { error: '服务端未绑定 D1（DB）' }, 500);
+  }
+
+  const q = (url.searchParams.get('q') || '').trim();
+  if (!q) {
+    return jsonResponse(env, { ok: true, runs: [], total: 0 });
+  }
+
+  const rawLimit = Number(url.searchParams.get('limit'));
+  const limit = Math.min(Math.max(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 1), 100);
+  const like = `%${q}%`;
+  const includeDeleted = isAdmin && url.searchParams.get('includeDeleted') === '1';
+  const deletedFilter = includeDeleted ? '' : 'AND deleted_at IS NULL';
+
+  try {
+    const stmt = env.DB.prepare(
+      `SELECT run_id, source, destination, arch, conclusion, duration_seconds, created_at, deleted_at
+         FROM syncs
+        WHERE (source LIKE ?1 OR destination LIKE ?1 OR repo LIKE ?1 OR tag LIKE ?1 OR arch LIKE ?1)
+          ${deletedFilter}
+        ORDER BY created_at DESC
+        LIMIT ?2`
+    ).bind(like, limit);
+    const { results } = await stmt.all();
+
+    const countRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM syncs
+        WHERE (source LIKE ?1 OR destination LIKE ?1 OR repo LIKE ?1 OR tag LIKE ?1 OR arch LIKE ?1)
+          ${deletedFilter}`
+    ).bind(like).first();
+
+    return jsonResponse(env, {
+      ok: true,
+      includeDeleted,
+      total: (countRow && countRow.n) || 0,
+      runs: (results || []).map((r) => ({
+        id: r.run_id,
+        source: r.source,
+        destination: r.destination,
+        arch: r.arch,
+        conclusion: r.conclusion,
+        duration_seconds: r.duration_seconds,
+        created_at: r.created_at,
+        deleted_at: r.deleted_at || null,
+        html_url: `https://github.com/${env.GITHUB_REPO}/actions/runs/${r.run_id}`,
+        title: `Sync ${r.source} → ${r.destination}${r.arch === 'all' ? ' [amd64+arm64]' : r.arch ? ` [${r.arch}]` : ''}`,
+      })),
+    });
+  } catch (err) {
+    console.error('search failed:', err && err.message);
+    return jsonResponse(env, { ok: false, error: '搜索失败（索引查询异常）' }, 502);
+  }
+}
+
+/* ---------------- 管理员：删除历史记录 ---------------- */
+
+/** 删除单条 GitHub 运行，并在索引里标记为已删除 */
+async function deleteRun(env, runIdRaw) {
+  const runId = Number(runIdRaw);
+  if (!Number.isFinite(runId) || runId <= 0) {
+    return { id: runIdRaw, ok: false, error: 'id 无效' };
+  }
+
+  try {
+    const resp = await githubFetch(env, `/repos/${env.GITHUB_REPO}/actions/runs/${runId}`, {
+      method: 'DELETE',
+    });
+    // 204 = 删除成功；404 = 已经不存在（视为成功，顺手清理索引）
+    if (resp.status !== 204 && resp.status !== 404) {
+      let message = `GitHub 返回 ${resp.status}`;
+      try {
+        const data = await resp.json();
+        if (data && data.message) message = data.message;
+      } catch { /* ignore */ }
+      return { id: runId, ok: false, error: message };
+    }
+    if (env.DB) {
+      await env.DB.prepare('UPDATE syncs SET deleted_at = ?2 WHERE run_id = ?1')
+        .bind(runId, new Date().toISOString()).run();
+    }
+    return { id: runId, ok: true };
+  } catch (err) {
+    console.error('deleteRun failed:', err && err.message);
+    return { id: runId, ok: false, error: '删除失败（网络异常）' };
+  }
+}
+
+async function handleDeleteRun(env, runIdRaw) {
+  if (!env.ADMIN_PASSWORD) {
+    return jsonResponse(env, { error: '未配置管理员口令，删除功能已关闭' }, 501);
+  }
+  const result = await deleteRun(env, runIdRaw);
+  if (!result.ok) {
+    return jsonResponse(env, { ok: false, error: result.error }, 502);
+  }
+  return jsonResponse(env, { ok: true, id: result.id });
+}
+
+async function handleBulkDelete(request, env) {
+  if (!env.ADMIN_PASSWORD) {
+    return jsonResponse(env, { error: '未配置管理员口令，删除功能已关闭' }, 501);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse(env, { error: 'Invalid JSON body' }, 400);
+  }
+
+  const ids = Array.isArray(body && body.ids) ? body.ids : [];
+  if (!ids.length) {
+    return jsonResponse(env, { error: 'ids 不能为空' }, 400);
+  }
+  if (ids.length > 50) {
+    return jsonResponse(env, { error: '单次最多删除 50 条' }, 400);
+  }
+
+  const results = [];
+  for (const id of ids) {
+    results.push(await deleteRun(env, id));
+  }
+  const failed = results.filter((r) => !r.ok);
+  return jsonResponse(env, {
+    ok: failed.length === 0,
+    deleted: results.filter((r) => r.ok).length,
+    failed: failed.length,
+    results,
+  });
 }
 
 function registryOf(env) {
@@ -348,6 +575,14 @@ async function handleSync(request, env) {
           new Date(r.created_at).getTime() >= startedAt - 15000
         );
         if (run) {
+          // 写入 D1 索引（失败不影响触发结果）
+          await recordSyncStart(env, {
+            runId: run.id,
+            source: target.source,
+            destination: target.destination,
+            arch: archValue,
+            createdAt: run.created_at || new Date().toISOString(),
+          });
           return jsonResponse(env, {
             ok: true,
             run_id: run.id,
@@ -400,6 +635,12 @@ async function handleStatus(env, url) {
           conclusion: s.conclusion,
         }))
       );
+    }
+
+    // 完成时把结论回写索引（幂等，重复轮询只更新同一行）
+    if (run.status === 'completed') {
+      const duration = durationBetween(run.run_started_at || run.created_at, run.updated_at);
+      await recordSyncFinish(env, Number(id), run.conclusion, duration, run.updated_at);
     }
 
     return jsonResponse(env, {
@@ -491,7 +732,41 @@ export default {
       }
       const authError = await requireAuth(request, env);
       if (authError) return authError;
-      return jsonResponse(env, { ok: true });
+      return jsonResponse(env, {
+        ok: true,
+        role: await currentRole(request, env),
+        adminEnabled: Boolean(env.ADMIN_PASSWORD),
+      });
+    }
+
+    if (url.pathname === '/api/search') {
+      if (request.method !== 'GET') {
+        return jsonResponse(env, { error: 'Method not allowed. Use GET /api/search?q=' }, 405);
+      }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
+      return handleSearch(env, url, { isAdmin: (await currentRole(request, env)) === 'admin' });
+    }
+
+    // 批量删除（管理员）
+    if (url.pathname === '/api/runs/bulk-delete') {
+      if (request.method !== 'POST') {
+        return jsonResponse(env, { error: 'Method not allowed. Use POST /api/runs/bulk-delete' }, 405);
+      }
+      const authError = await requireAuth(request, env, { requireAdmin: true });
+      if (authError) return authError;
+      return handleBulkDelete(request, env);
+    }
+
+    // 单条删除（管理员）：/api/runs/<id>
+    const deleteMatch = url.pathname.match(/^\/api\/runs\/(\d+)$/);
+    if (deleteMatch) {
+      if (request.method !== 'DELETE') {
+        return jsonResponse(env, { error: 'Method not allowed. Use DELETE /api/runs/<id>' }, 405);
+      }
+      const authError = await requireAuth(request, env, { requireAdmin: true });
+      if (authError) return authError;
+      return handleDeleteRun(env, deleteMatch[1]);
     }
 
     if (url.pathname === '/api/config') {

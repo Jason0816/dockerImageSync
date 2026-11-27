@@ -105,11 +105,34 @@ npx wrangler@latest secret put GITHUB_REPO      # owner/repo
 npx wrangler@latest secret put WORKFLOW_ID      # sync-images.yml
 npx wrangler@latest secret put GITHUB_TOKEN     # Fine-grained PAT
 npx wrangler@latest secret put APP_PASSWORD     # 网页登录口令
+npx wrangler@latest secret put ADMIN_PASSWORD   # 可选：管理员口令（可删除历史记录）
 ```
 
 可选：`SWR_REGISTRY`、`SWR_ORG`、`ALLOWED_ORIGIN`。
 
 `APP_PASSWORD` 是**必需**的：未配置时所有接口按设计返回 500，保证部署不会处于无鉴权状态。这一点要让用户知道，否则他会以为部署失败。
+
+`ADMIN_PASSWORD` 是可选的**第二角色**：配置后用它登录得到 `role=admin`，可删除单条/批量历史记录，并能在搜索时勾选「含已删除」做审计。**不配置时删除接口返回 501**，这是刻意的安全默认值——不要为了让功能"看起来完整"而擅自替用户设置，应先询问是否需要。
+
+### 5b. 可选：D1 索引（历史搜索）
+
+不配置也能用，但历史只来自 GitHub 最近 15 条（受保留期限制）。要支持长期搜索：
+
+```sh
+cd worker
+npx wrangler@latest d1 create image-sync-index     # 记下 database_id
+# 在 wrangler.toml 增加：
+#   [[d1_databases]]
+#   binding = "DB"
+#   database_name = "image-sync-index"
+#   database_id = "<上一步的 id>"
+npx wrangler@latest d1 execute image-sync-index --remote --file=schema.sql
+npx wrangler@latest deploy
+```
+
+需要 Cloudflare Token 具备 **D1:Edit** 权限（仅 Workers 权限会返回 `401 Authentication error`）。
+
+已有历史可用 SQL 回填：从 `GET /repos/{repo}/actions/runs?per_page=100` 分页读取，解析 `display_title` 里的 `Sync <源> → <目标> [arch]`，生成 `INSERT ... ON CONFLICT(run_id) DO UPDATE`。标题没有地址的旧运行（早期 `Sync Container Images`）应跳过。
 
 ### 6. 端到端验证
 
@@ -149,6 +172,9 @@ curl -s "https://<worker-url>/api/runs?limit=5" -H "Authorization: Bearer $TOKEN
 - `all` 的语义是「全部平台」，但实现上只同步 **amd64 + arm64**（`--arch=amd64 --arch=arm64`），不同步 386/ppc64le/riscv64/s390x。要改变这一点需同时改工作流与文档，不要只在一边改。
 - 架构与镜像提供的平台不匹配时，`Run image-syncer` 步骤会显式失败并提示「架构不匹配」，不要把它当成偶发故障。
 - 网页上的组织名默认是**锁定**状态，这是刻意设计；解锁要用户主动点。
+- 令牌格式是 `v1.<role>.<exp>.<hmac>`，角色由 HMAC 保护，不要在前端允许"声称自己是 admin"。改动令牌格式会让旧令牌全部失效，属于预期行为，需提醒用户重新登录。
+- 删除历史记录会**真删 GitHub 运行及其日志**（不可恢复），但不动 SWR 镜像。实现上是「GitHub 真删 + D1 标记 `deleted_at`」，两者必须同时做，只做一半会导致列表消失但搜索仍能命中、或反之。
+- 删除接口在未配置 `ADMIN_PASSWORD` 时必须返回 501，不要为了方便改成放行。
 
 ## 出问题时
 

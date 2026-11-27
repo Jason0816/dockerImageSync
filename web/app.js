@@ -66,6 +66,13 @@ const historyEmpty = document.getElementById('historyEmpty');
 const historyHint = document.getElementById('historyHint');
 const historySearch = document.getElementById('historySearch');
 const refreshHistoryBtn = document.getElementById('refreshHistory');
+const adminToggleBtn = document.getElementById('adminToggle');
+const bulkBar = document.getElementById('bulkBar');
+const selectAllBox = document.getElementById('selectAll');
+const bulkCountEl = document.getElementById('bulkCount');
+const bulkDeleteBtn = document.getElementById('bulkDelete');
+const showDeletedBox = document.getElementById('showDeleted');
+const searchNote = document.getElementById('searchNote');
 
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
@@ -530,6 +537,17 @@ function statusWord(conclusion) {
 let historyMode = 'local'; // 'global' 读 GitHub 运行记录；'local' 回退到本地缓存
 let globalRuns = [];
 let historyLoading = false; // 首次拉取全局记录期间的加载态
+let role = 'user';          // 登录角色：user / admin
+let adminEnabled = false;   // 服务端是否配置了管理员口令
+let adminMode = false;      // 前端是否处于管理模式（显示选择框）
+let showDeleted = false;    // 管理员：搜索结果是否包含已删除记录
+const selectedRunIds = new Set();
+
+// 搜索（走 D1 索引）
+let searchResults = null;   // null = 未搜索；数组 = 搜索结果
+let searchTotal = 0;
+let searchTimer = null;
+let searchSeq = 0;
 
 // 全局记录的会话级快照：刷新时先渲染它，再后台校验更新（stale-while-revalidate）
 const RUNS_CACHE_KEY = 'imageSync.runsCache.v1';
@@ -619,9 +637,27 @@ function createStatusIcon(conclusion, status) {
 }
 
 /** 左栏只放状态图标；架构与耗时移到元信息行右侧 */
-function buildHistoryItem({ conclusion, status, source, destination, text, meta, url, copyText, arch, duration }) {
+function buildHistoryItem({ runId, conclusion, status, source, destination, text, meta, url, copyText, arch, duration, deleted }) {
   const li = document.createElement('li');
-  li.className = 'hist-item';
+  li.className = deleted ? 'hist-item hist-item--deleted' : 'hist-item';
+
+  // 管理员模式：勾选框
+  if (adminMode && runId) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'hist-select';
+    box.dataset.runId = String(runId);
+    box.checked = selectedRunIds.has(Number(runId));
+    if (deleted) box.disabled = true;
+    box.title = '选择此记录';
+    box.addEventListener('change', () => {
+      const id = Number(runId);
+      if (box.checked) selectedRunIds.add(id);
+      else selectedRunIds.delete(id);
+      updateBulkCount();
+    });
+    li.appendChild(box);
+  }
 
   const rail = document.createElement('div');
   rail.className = 'hist-rail';
@@ -660,6 +696,13 @@ function buildHistoryItem({ conclusion, status, source, destination, text, meta,
 
   const metaText = document.createElement('span');
   metaText.className = 'hist-meta-text';
+  if (deleted) {
+    const tag = document.createElement('span');
+    tag.className = 'hist-tag-del';
+    tag.textContent = '已删除';
+    tag.title = '已从 Actions 删除，仅保留在索引中';
+    metaEl.appendChild(tag);
+  }
   metaText.textContent = meta;
   metaEl.appendChild(metaText);
 
@@ -682,6 +725,17 @@ function buildHistoryItem({ conclusion, status, source, destination, text, meta,
       dataEl.appendChild(archEl);
     }
     metaEl.appendChild(dataEl);
+  }
+
+  // 管理员模式：删除按钮放在元信息行最右，与数据列对齐
+  if (adminMode && runId && !deleted) {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'hist-del';
+    del.textContent = '✕';
+    del.title = '删除这条记录';
+    del.addEventListener('click', () => deleteRuns([Number(runId)]));
+    metaEl.appendChild(del);
   }
 
   const actions = document.createElement('div');
@@ -781,17 +835,49 @@ function renderHistory() {
     return;
   }
 
+  const isSearch = Array.isArray(searchResults);
   const isGlobal = historyMode === 'global';
-  const all = isGlobal ? globalRuns : loadHistory();
+  const all = isSearch ? searchResults : (isGlobal ? globalRuns : loadHistory());
   const query = (historySearch && historySearch.value ? historySearch.value : '').trim().toLowerCase();
 
   if (countEl) countEl.textContent = String(all.length);
 
+  if (searchNote) {
+    if (isSearch) {
+      searchNote.textContent = `索引匹配 ${searchTotal} 条${searchTotal > all.length ? `，显示最新 ${all.length} 条` : ''}（含已从 Actions 清理的记录）`;
+      searchNote.hidden = false;
+    } else {
+      searchNote.hidden = true;
+    }
+  }
+
   const normalized = all.map((entry) => {
+    // 搜索结果是 D1 行：字段直接可用，没有 status 字段
+    if (isSearch) {
+      const effStatus = entry.conclusion ? 'completed' : 'in_progress';
+      return {
+        runId: entry.id,
+        conclusion: entry.conclusion,
+        status: effStatus,
+        deleted: Boolean(entry.deleted_at),
+        source: entry.source,
+        destination: entry.destination,
+        arch: entry.arch,
+        duration: fmtDuration(entry.duration_seconds, effStatus),
+        text: entry.title || `运行 #${entry.id}`,
+        meta: [metaStatusText(entry.conclusion, effStatus),
+          fmtClock(entry.created_at, dayBucket(entry.created_at))].filter(Boolean).join(' · '),
+        ts: entry.created_at,
+        url: entry.html_url,
+        copyText: entry.destination,
+        search: `${entry.source} ${entry.destination} ${entry.arch || ''}`.toLowerCase(),
+      };
+    }
     if (isGlobal) {
       const parsed = parseRunTitle(entry.title);
       const dur = fmtDuration(entry.duration_seconds, entry.status);
       return {
+        runId: entry.id,
         conclusion: entry.conclusion,
         status: entry.status,
         source: parsed.source,
@@ -818,6 +904,7 @@ function renderHistory() {
     const effStatus = entry.conclusion ? 'completed' : (stale ? 'unknown' : 'in_progress');
     const dur = fmtDuration(localDur, effStatus);
     return {
+      runId: entry.runId,
       conclusion: entry.conclusion,
       status: effStatus,
       source: entry.source || '',
@@ -868,6 +955,156 @@ function renderHistory() {
   });
 
   updateHistoryHint(query ? 0 : all.length);
+}
+
+/* ---------------- 搜索（D1 索引） ---------------- */
+
+async function runSearch(q) {
+  if (!q) {
+    searchResults = null;
+    searchTotal = 0;
+    renderHistory();
+    return;
+  }
+  const seq = ++searchSeq;
+  try {
+    const withDeleted = showDeleted && role === 'admin' ? '&includeDeleted=1' : '';
+    const resp = await apiFetch(`/api/search?limit=50${withDeleted}&q=${encodeURIComponent(q)}`);
+    if (resp.status === 401) {
+      handleUnauthorized('登录已过期，请重新登录');
+      return;
+    }
+    const data = await resp.json();
+    if (seq !== searchSeq) return; // 已有更新的输入，丢弃旧结果
+    if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    searchResults = data.runs || [];
+    searchTotal = data.total || searchResults.length;
+  } catch (err) {
+    if (seq !== searchSeq) return;
+    searchResults = [];
+    searchTotal = 0;
+    showResult('error', `搜索失败：${err.message}`);
+  }
+  renderHistory();
+}
+
+function scheduleSearch() {
+  const q = (historySearch && historySearch.value ? historySearch.value : '').trim();
+  if (searchTimer) clearTimeout(searchTimer);
+  // 输入为空立刻回到最近列表，否则 300ms 防抖
+  if (!q) {
+    runSearch('');
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(q), 300);
+}
+
+/* ---------------- 管理员：管理模式与删除 ---------------- */
+
+function applyRole() {
+  if (adminToggleBtn) {
+    adminToggleBtn.hidden = !(role === 'admin' && adminEnabled);
+  }
+  if (!adminMode && bulkBar) bulkBar.hidden = true;
+}
+
+function setAdminMode(on) {
+  adminMode = on;
+  selectedRunIds.clear();
+  showDeleted = false;
+  if (showDeletedBox) showDeletedBox.checked = false;
+  if (bulkBar) bulkBar.hidden = !on;
+  if (selectAllBox) selectAllBox.checked = false;
+  if (adminToggleBtn) adminToggleBtn.textContent = on ? '退出管理' : '管理';
+  updateBulkCount();
+  renderHistory();
+}
+
+function updateBulkCount() {
+  if (bulkCountEl) bulkCountEl.textContent = `已选 ${selectedRunIds.size} 条`;
+  if (bulkDeleteBtn) bulkDeleteBtn.disabled = selectedRunIds.size === 0;
+  if (selectAllBox) {
+    const boxes = historyList ? historyList.querySelectorAll('.hist-select') : [];
+    selectAllBox.checked = boxes.length > 0 && selectedRunIds.size === boxes.length;
+  }
+}
+
+/** 删除后同步清理本地缓存，避免回退时又冒出来 */
+function purgeLocalCaches(ids) {
+  const set = new Set(ids.map(Number));
+  try {
+    const hist = loadHistory().filter((e) => !set.has(Number(e.runId)));
+    saveHistory(hist);
+  } catch { /* ignore */ }
+  try {
+    const raw = sessionStorage.getItem(RUNS_CACHE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.runs)) {
+        data.runs = data.runs.filter((r) => !set.has(Number(r.id)));
+        sessionStorage.setItem(RUNS_CACHE_KEY, JSON.stringify(data));
+      }
+    }
+  } catch { /* ignore */ }
+  globalRuns = globalRuns.filter((r) => !set.has(Number(r.id)));
+  if (Array.isArray(searchResults)) {
+    searchResults = searchResults.filter((r) => !set.has(Number(r.id)));
+    searchTotal = Math.max(0, searchTotal - set.size);
+  }
+  ids.forEach((id) => selectedRunIds.delete(Number(id)));
+}
+
+async function deleteRuns(ids) {
+  const list = [...new Set(ids.map(Number))].filter((n) => Number.isFinite(n) && n > 0);
+  if (!list.length) return;
+
+  const confirmed = window.confirm(
+    `将删除 ${list.length} 条运行记录及其日志，删除后不可恢复。\n\n确定继续？`
+  );
+  if (!confirmed) return;
+
+  if (bulkDeleteBtn) bulkDeleteBtn.disabled = true;
+  showResult('loading', `正在删除 ${list.length} 条记录…`);
+
+  try {
+    let deleted = 0;
+    let failed = [];
+    if (list.length === 1) {
+      const resp = await apiFetch(`/api/runs/${list[0]}`, { method: 'DELETE' });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.ok) deleted = 1;
+      else failed = [list[0]];
+    } else {
+      const resp = await apiFetch('/api/runs/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: list }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok || resp.status === 502) {
+        deleted = data.deleted || 0;
+        failed = (data.results || []).filter((r) => !r.ok).map((r) => r.id);
+        if (data.error && !(data.results || []).length) throw new Error(data.error);
+      } else {
+        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+    }
+
+    purgeLocalCaches(list.filter((id) => !failed.includes(id)));
+    await refreshHistory();
+    if (Array.isArray(searchResults)) scheduleSearch();
+
+    if (failed.length) {
+      showResult('error', `已删除 ${deleted} 条，${failed.length} 条失败（可能仍在运行或已被删除）`);
+    } else {
+      showResult('success', `✅ 已删除 ${deleted} 条记录`);
+    }
+  } catch (err) {
+    showResult('error', `❌ 删除失败：${err.message}`);
+  } finally {
+    updateBulkCount();
+    if (bulkDeleteBtn) bulkDeleteBtn.disabled = selectedRunIds.size === 0;
+  }
 }
 
 /** 拉取全局运行记录（失败则回退本地缓存） */
@@ -1167,6 +1404,9 @@ loginForm.addEventListener('submit', async (e) => {
 
     if (resp.ok && data.ok && data.token) {
       setToken(data.token);
+      role = data.role || 'user';
+      adminEnabled = Boolean(data.role === 'admin');
+      applyRole();
       passwordInput.value = '';
       showApp();
       await loadConfig();
@@ -1202,7 +1442,51 @@ document.addEventListener('keydown', (event) => {
 });
 
 if (historySearch) {
-  historySearch.addEventListener('input', renderHistory);
+  historySearch.addEventListener('input', scheduleSearch);
+}
+
+if (adminToggleBtn) {
+  adminToggleBtn.addEventListener('click', () => setAdminMode(!adminMode));
+}
+
+if (selectAllBox) {
+  selectAllBox.addEventListener('change', () => {
+    const boxes = historyList ? historyList.querySelectorAll('.hist-select') : [];
+    selectedRunIds.clear();
+    boxes.forEach((box) => {
+      box.checked = selectAllBox.checked;
+      if (selectAllBox.checked) {
+        const id = Number(box.dataset.runId);
+        if (Number.isFinite(id)) selectedRunIds.add(id);
+      }
+    });
+    updateBulkCount();
+  });
+}
+
+if (bulkDeleteBtn) {
+  bulkDeleteBtn.addEventListener('click', () => {
+    if (!selectedRunIds.size) return;
+    deleteRuns([...selectedRunIds]);
+  });
+}
+
+if (showDeletedBox) {
+  showDeletedBox.addEventListener('change', () => {
+    showDeleted = Boolean(showDeletedBox.checked);
+    const q = (historySearch && historySearch.value ? historySearch.value : '').trim();
+    if (q) {
+      scheduleSearch();
+    } else {
+      // 没有关键字时搜索不生效，给个提示
+      if (searchNote) {
+        searchNote.textContent = showDeleted
+          ? '输入关键字搜索时，结果将包含已删除的记录'
+          : '';
+        searchNote.hidden = !showDeleted;
+      }
+    }
+  });
 }
 
 if (refreshHistoryBtn) {
@@ -1329,6 +1613,10 @@ async function boot() {
     try {
       const resp = await apiFetch('/api/session');
       if (resp.ok) {
+        const session = await resp.json().catch(() => ({}));
+        role = session.role || 'user';
+        adminEnabled = Boolean(session.adminEnabled);
+        applyRole();
         showApp();
         await loadConfig();
         refreshHistory();

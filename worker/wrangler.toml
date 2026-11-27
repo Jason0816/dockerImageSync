@@ -6,11 +6,18 @@ compatibility_date = "2025-06-01"
 [assets]
 directory = "../web"
 
+# D1 索引：记录每次同步，支持历史搜索（不受 GitHub 90 天保留期限制）
+[[d1_databases]]
+binding = "DB"
+database_name = "image-sync-index"
+database_id = "7e397584-8b92-4683-9e25-ca2608b542e2"
+
 # 环境变量（在 Cloudflare 上通过 `wrangler secret put` 设置）：
 #   GITHUB_REPO     仓库 owner/repo
 #   WORKFLOW_ID     工作流文件名，如 sync-images.yml
 #   GITHUB_TOKEN    Fine-grained Token（Contents / Actions / Workflows 读写）
 #   APP_PASSWORD    前端访问口令（登录后才能调用 API）
+#   ADMIN_PASSWORD  可选；配置后该口令登录的角色可删除历史记录
 #   SWR_REGISTRY    可选，默认 swr.cn-east-4.myhuaweicloud.com
 #   SWR_ORG         可选，默认 ascend-sync
 #   ALLOWED_ORIGIN  可选，前端域名（同源部署时无需设置）

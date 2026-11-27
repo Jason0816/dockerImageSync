@@ -735,6 +735,61 @@
       box-shadow: 0 0 0 2px var(--accent-soft-bg);
     }
 
+    /* 侧栏头部操作区 */
+    .sidebar-actions { display: inline-flex; gap: 0.6rem; }
+
+    /* 批量操作条（仅管理员）：中性底 + 危险动作只用红色 */
+    .bulk-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+      padding: 0.35rem 0.45rem;
+      border-radius: 7px;
+      background: var(--input-bg);
+      border: 1px solid var(--divider);
+      font-size: 0.7rem;
+    }
+
+    .bulk-bar[hidden] { display: none; }
+
+    .bulk-all {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin: 0;
+      cursor: pointer;
+      color: var(--text-soft);
+      font-size: 0.7rem;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .bulk-all input { width: auto; margin: 0; accent-color: var(--accent); }
+
+    .bulk-deleted { margin-left: 0.15rem; color: var(--dim); }
+
+    .bulk-count { color: var(--dim); margin-left: auto; white-space: nowrap; }
+
+    .mini-btn.danger {
+      border-color: var(--err-border);
+      background: var(--err-bg);
+      color: var(--err);
+    }
+
+    .mini-btn.danger:hover { background: var(--err-border); color: var(--err); }
+
+    /* 搜索结果提示 */
+    .search-note {
+      font-size: 0.68rem;
+      color: var(--dim);
+      margin: -0.25rem 0 0.45rem;
+    }
+
+    .search-note[hidden] { display: none; }
+
     .hist-day {
       font-size: 0.63rem;
       font-weight: 600;
@@ -755,6 +810,9 @@
     }
 
     .hist-item:hover { background: var(--item-hover); border-color: var(--item-border); }
+
+    /* 管理模式：复选框与状态图标属于同一组，间距收紧 */
+    .hist-item:has(.hist-select) { gap: 0.3rem; }
 
     /* 左栏：只放状态图标，与首行文字对齐 */
     .hist-rail {
@@ -789,6 +847,53 @@
     @keyframes hist-spin { to { transform: rotate(360deg); } }
 
     /* 元信息行：左侧状态+时间，右侧耗时+架构 */
+    /* 管理员模式下的选择框 */
+    .hist-select {
+      flex: none;
+      width: 0.9rem;
+      height: 0.9rem;
+      margin: 0.12rem 0 0 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* 已删除记录：整行淡化 + 标签 */
+    .hist-item--deleted { opacity: 0.62; }
+
+    .hist-tag-del {
+      display: inline-block;
+      margin-right: 0.35rem;
+      padding: 0 0.25rem;
+      border-radius: 3px;
+      font-size: 0.6rem;
+      line-height: 1.5;
+      color: var(--err);
+      background: var(--err-bg);
+      border: 1px solid var(--err-border);
+      vertical-align: 1px;
+    }
+
+    .hist-del {
+      flex: none;
+      width: auto;
+      min-height: 0;
+      margin: 0 0 0 0.1rem;
+      padding: 0.1rem 0.3rem;
+      background: none;
+      border: none;
+      border-radius: 4px;
+      color: var(--faint);
+      font-size: 0.75rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .hist-del:hover {
+      color: var(--err);
+      background: var(--err-bg);
+      opacity: 1;
+    }
+
     .hist-meta {
       display: flex;
       align-items: center;
@@ -1366,11 +1471,25 @@
 
       <div class="sidebar-head">
         <span>最近同步<span class="count" id="historyCount">0</span></span>
-        <button type="button" id="refreshHistory" class="link-btn">刷新</button>
+        <span class="sidebar-actions">
+          <button type="button" id="adminToggle" class="link-btn" hidden>管理</button>
+          <button type="button" id="refreshHistory" class="link-btn">刷新</button>
+        </span>
       </div>
 
       <input type="search" id="historySearch" class="history-search"
              placeholder="搜索镜像 / 组织 / 状态" autocomplete="off" />
+
+      <div class="bulk-bar" id="bulkBar" hidden>
+        <label class="bulk-all"><input type="checkbox" id="selectAll" /> 全选</label>
+        <span class="bulk-count" id="bulkCount">已选 0 条</span>
+        <button type="button" id="bulkDelete" class="mini-btn danger">删除选中</button>
+        <label class="bulk-all bulk-deleted" title="审计：把已删除的记录也纳入搜索结果">
+          <input type="checkbox" id="showDeleted" /> 含已删除
+        </label>
+      </div>
+
+      <div class="search-note" id="searchNote" hidden></div>
 
       <ul class="history-list" id="historyList"></ul>
       <div class="history-empty" id="historyEmpty">暂无同步记录</div>

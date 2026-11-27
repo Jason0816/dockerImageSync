@@ -63,7 +63,9 @@
 | 实时进度 | 轮询 GitHub Actions 运行状态，在右侧抽屉中展示到每个步骤；关闭后表单下方出现「查看进度」状态条，点击可重新打开 |
 | 自动公开 | 同步后调用 SWR API 设置 `is_public: true`，可在页面上关闭 |
 | 主题 | 亮色 / 暗色 / 跟随系统 |
-| 历史记录 | 全局（来自 Actions 运行记录），支持搜索、日期分组、显示架构、复制镜像名 |
+| 历史记录 | 全局（来自 Actions 运行记录），支持日期分组、显示架构、耗时、复制镜像名 |
+| **历史搜索（D1）** | 每次同步写入 Cloudflare D1 索引；搜索框实时查询 `source / destination / 仓库名 / tag / 架构`，不受 GitHub 90 天保留期限制 |
+| **管理员模式** | 配置 `ADMIN_PASSWORD` 后，该口令登录可对历史记录**单条 / 批量删除**，并可勾选「含已删除」做审计查询 |
 | 地址预检 | 源地址未写 registry 时提示「将按 Docker Hub 解析为 …」，避免把 quay.io 镜像误当官方镜像 |
 
 ---
@@ -317,9 +319,51 @@ curl -s https://<worker>/api/runs?limit=5 \
 | `WORKFLOW_ID` | ✅ | `sync-images.yml` |
 | `GITHUB_TOKEN` | ✅ | Fine-grained Token（Contents / Actions / Workflows） |
 | `APP_PASSWORD` | ✅ | 页面访问口令（未配置时接口返回 500） |
+| `ADMIN_PASSWORD` | ⬜ | 管理员口令。配置后用它登录可获得删除历史记录的权限；**未配置时删除接口返回 501，功能关闭** |
 | `SWR_REGISTRY` | ⬜ | 目标 Registry，默认 `swr.cn-east-4.myhuaweicloud.com` |
 | `SWR_ORG` | ⬜ | 默认组织，默认 `ascend-sync` |
 | `ALLOWED_ORIGIN` | ⬜ | CORS 白名单，默认 `*` |
+
+### D1 索引（历史搜索）
+
+同步历史默认只从 GitHub Actions 读最近 15 条，受**运行记录保留期**（默认 90 天）限制。为支持长期搜索，Worker 会把每次同步写入 D1。
+
+**创建与绑定**：
+
+```bash
+cd worker
+npx wrangler d1 create image-sync-index          # 记下返回的 database_id
+# 写入 wrangler.toml：
+#   [[d1_databases]]
+#   binding = "DB"
+#   database_name = "image-sync-index"
+#   database_id = "<上一步的 id>"
+
+npx wrangler d1 execute image-sync-index --remote --file=schema.sql   # 建表
+npx wrangler deploy
+```
+
+**表结构**（`worker/schema.sql`）：`source` / `destination` 存**完整地址**，`registry` / `org` / `repo` / `tag` 是派生列（便于高效查询），另有 `arch`、`conclusion`、`duration_seconds`、`created_at`、`finished_at`、`deleted_at`。
+
+**写入时机**：触发同步成功后写一条（`conclusion` 为空）；前端轮询到运行结束时回填结论与耗时。
+
+**回填历史**：从 GitHub 拉取既有运行并写入索引（`run-name` 里有完整地址才能解析）：
+
+```sql
+-- 由脚本生成，等价于
+INSERT INTO syncs (run_id, source, destination, registry, org, repo, tag, arch, conclusion,
+                   duration_seconds, created_at, finished_at)
+VALUES (...)
+ON CONFLICT(run_id) DO UPDATE SET ...;
+```
+
+> 早期 `run-name` 还是 `Sync Container Images` 的运行没有地址信息，会被跳过。
+
+**管理员删除的语义**：删除会调用 GitHub API **真的删掉该次运行及其日志**，同时在 D1 里把该行标记 `deleted_at`（软删除）。所以：
+
+- 默认搜索会过滤掉已删除记录
+- 管理模式下勾选「含已删除」可以审计查询（仅管理员，服务端校验）
+- 想彻底清理：`DELETE FROM syncs WHERE deleted_at IS NOT NULL;`
 
 ### `auth.yaml`
 
@@ -344,14 +388,29 @@ docker.io:
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/api/login` | `{password}` → `{ok, token, expires_at}` |
-| `GET` | `/api/session` | 校验令牌是否有效 |
+| `POST` | `/api/login` | `{password}` → `{ok, token, expires_at, role}`；`role` 为 `user` 或 `admin` |
+| `GET` | `/api/session` | 校验令牌，返回 `{ok, role, adminEnabled}` |
 | `GET` | `/api/config` | 返回 registry / 默认组织（`default_arch` 仅供展示，前端不会自动选中架构） |
 | `POST` | `/api/sync` | `{source, org?, arch?, public?}` → `{ok, run_id, html_url, destination}` |
-| `GET` | `/api/status?id=` | 运行状态与步骤列表 |
+| `GET` | `/api/status?id=` | 运行状态与步骤列表；完成时顺带回写 D1 索引 |
 | `GET` | `/api/runs?limit=15` | 全局运行记录（标题含源/目标镜像） |
+| `GET` | `/api/search?q=&limit=50&includeDeleted=1` | 查 D1 索引；`includeDeleted` 仅管理员生效 |
+| `DELETE` | `/api/runs/:id` | **管理员**：删除单条运行（含日志），D1 标记软删除 |
+| `POST` | `/api/runs/bulk-delete` | **管理员**：`{ids:[...]}`，单次上限 50，返回 `{deleted, failed, results}` |
 
-错误响应统一为 `{ "error": "..." }`，状态码 `400 / 401 / 404 / 405 / 502`。
+错误响应统一为 `{ "error": "..." }`，状态码 `400 / 401 / 403 / 404 / 405 / 500 / 501 / 502`。
+
+**权限示意**：
+
+| 能力 | `user` | `admin` |
+|---|---|---|
+| 查看 / 搜索历史 | ✅ | ✅ |
+| 触发同步 | ✅ | ✅ |
+| 删除单条 / 批量 | ❌ 403 | ✅ |
+| 搜索含已删除记录 | ❌ 参数被忽略 | ✅ |
+| 未配置 `ADMIN_PASSWORD` 时删除 | ❌ 501 | ❌ 501 |
+
+> 令牌格式为 `v1.<role>.<exp>.<hmac>`，`role` 由 HMAC 保护；升级到带角色的令牌后，**旧的 3 段令牌会失效，需要重新登录**。
 
 ---
 
@@ -366,9 +425,11 @@ docker.io:
 ├── auth.yaml                           # image-syncer 认证（环境变量占位）
 ├── images.yaml                         # 默认同步规则（运行时被覆盖）
 ├── scripts/make_repo_public.py         # 同步后把 SWR 仓库设为公开
+├── scripts/classify_sync_failure.py    # 失败日志 → 中文归类 + Job Summary
 ├── worker/
-│   ├── index.js                        # Cloudflare Worker：鉴权 + 触发 + 查询
-│   ├── wrangler.toml                   # Worker 配置（含静态资源）
+│   ├── index.js                        # Cloudflare Worker：鉴权 + 触发 + 查询 + 删除
+│   ├── wrangler.toml                   # Worker 配置（含静态资源与 D1 绑定）
+│   ├── schema.sql                      # D1 表结构（同步索引）
 │   └── package.json
 ├── web/
 │   ├── index.html                      # 页面与样式（CSS 变量主题）
@@ -427,6 +488,24 @@ Token 缺少 `Contents` 或 `Workflows` 权限；修改 fine-grained token 权�
 **页面提示「未登录或登录已过期」？**
 
 口令被修改过，或令牌超过 7 天，重新登录即可。
+
+> 升级到带角色的令牌（`v1.<role>.<exp>.<sig>`）后，此前签发的旧令牌会一次性失效，需要重新登录一次。
+
+**搜不到几个月前的同步记录？**
+
+历史列表默认只读 GitHub 最近 15 条运行，且 GitHub 只保留一定期限（默认 90 天）。要看更早的记录必须启用 D1 索引（见「D1 索引」一节）——索引是永久的，且搜索走索引而非 GitHub。
+
+**「管理」按钮不显示 / 删除报 403？**
+
+删除需要管理员角色：先用 `ADMIN_PASSWORD` 登录，且该 secret 必须已配置。用普通 `APP_PASSWORD` 登录只能查看和触发。
+
+**删除后还能查到这条记录吗？**
+
+能，但只在管理员勾选「含已删除」的搜索结果里。删除时 GitHub 上的运行和日志是真删，D1 里只标记 `deleted_at` 用于审计。要彻底清掉：`DELETE FROM syncs WHERE deleted_at IS NOT NULL;`
+
+**勾选多条后点「删除选中」没反应？**
+
+确认处于管理模式、已勾选至少一条、且运行不是「进行中」（GitHub 不允许删除运行中的任务，需先取消）。
 
 **Cloudflare 返回 `error code: 1010`？**
 
