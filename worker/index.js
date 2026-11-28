@@ -258,6 +258,94 @@ async function recordSyncFinish(env, runId, conclusion, durationSeconds, finishe
   }
 }
 
+/** 同步统计：近 N 天的次数 / 成功率 / 耗时，以及按天序列供前端画趋势 */
+async function handleStats(env, url) {
+  if (!env.DB) {
+    return jsonResponse(env, { error: '服务端未绑定 D1（DB）' }, 500);
+  }
+
+  const rawDays = Number(url.searchParams.get('days'));
+  const days = [7, 30, 90].includes(rawDays) ? rawDays : 30;
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+  try {
+    const totals = await env.DB.prepare(
+      `SELECT COUNT(*) AS n,
+              SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END) AS ok,
+              SUM(CASE WHEN conclusion = 'failure' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN conclusion IN ('cancelled','skipped') THEN 1 ELSE 0 END) AS other,
+              SUM(COALESCE(duration_seconds, 0)) AS total_duration,
+              AVG(duration_seconds) AS avg_duration,
+              COUNT(DISTINCT repo) AS repos
+         FROM syncs
+        WHERE created_at >= ?1 AND deleted_at IS NULL`
+    ).bind(cutoff).first();
+
+    const series = await env.DB.prepare(
+      `SELECT substr(created_at, 1, 10) AS day,
+              COUNT(*) AS n,
+              AVG(duration_seconds) AS avg_duration
+         FROM syncs
+        WHERE created_at >= ?1 AND deleted_at IS NULL
+        GROUP BY day
+        ORDER BY day`
+    ).bind(cutoff).all();
+
+    const slowest = await env.DB.prepare(
+      `SELECT run_id, source, destination, arch, conclusion, duration_seconds, created_at
+         FROM syncs
+        WHERE created_at >= ?1 AND deleted_at IS NULL AND duration_seconds IS NOT NULL
+        ORDER BY duration_seconds DESC
+        LIMIT 3`
+    ).bind(cutoff).all();
+
+    const topRepos = await env.DB.prepare(
+      `SELECT repo, COUNT(*) AS n,
+              SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END) AS ok
+         FROM syncs
+        WHERE created_at >= ?1 AND deleted_at IS NULL
+        GROUP BY repo
+        ORDER BY n DESC
+        LIMIT 5`
+    ).bind(cutoff).all();
+
+    const t = totals || {};
+    return jsonResponse(env, {
+      ok: true,
+      days,
+      cutoff,
+      totals: {
+        runs: t.n || 0,
+        success: t.ok || 0,
+        failure: t.failed || 0,
+        other: t.other || 0,
+        successRate: t.n ? Math.round((t.ok || 0) / t.n * 100) : 0,
+        totalDuration: t.total_duration || 0,
+        avgDuration: t.avg_duration ? Math.round(t.avg_duration) : null,
+        repos: t.repos || 0,
+      },
+      series: (series.results || []).map((r) => ({
+        day: r.day,
+        runs: r.n,
+        avgDuration: r.avg_duration ? Math.round(r.avg_duration) : null,
+      })),
+      slowest: (slowest.results || []).map((r) => ({
+        id: r.run_id,
+        source: r.source,
+        destination: r.destination,
+        arch: r.arch,
+        conclusion: r.conclusion,
+        durationSeconds: r.duration_seconds,
+        createdAt: r.created_at,
+      })),
+      topRepos: (topRepos.results || []).map((r) => ({ repo: r.repo, runs: r.n, success: r.ok || 0 })),
+    });
+  } catch (err) {
+    console.error('stats failed:', err && err.message);
+    return jsonResponse(env, { ok: false, error: '统计查询失败' }, 502);
+  }
+}
+
 /** 搜索历史索引；includeDeleted 仅管理员可用（审计已删除记录） */
 async function handleSearch(env, url, { isAdmin = false } = {}) {
   if (!env.DB) {
@@ -737,6 +825,15 @@ export default {
         role: await currentRole(request, env),
         adminEnabled: Boolean(env.ADMIN_PASSWORD),
       });
+    }
+
+    if (url.pathname === '/api/stats') {
+      if (request.method !== 'GET') {
+        return jsonResponse(env, { error: 'Method not allowed. Use GET /api/stats?days=30' }, 405);
+      }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
+      return handleStats(env, url);
     }
 
     if (url.pathname === '/api/search') {

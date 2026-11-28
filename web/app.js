@@ -73,6 +73,17 @@ const bulkCountEl = document.getElementById('bulkCount');
 const bulkDeleteBtn = document.getElementById('bulkDelete');
 const showDeletedBox = document.getElementById('showDeleted');
 const searchNote = document.getElementById('searchNote');
+const statsStrip = document.getElementById('statsStrip');
+const statsLine = document.getElementById('statsLine');
+const spark = document.getElementById('spark');
+const sparkLg = document.getElementById('sparkLg');
+const statsBackdrop = document.getElementById('statsBackdrop');
+const statsClose = document.getElementById('statsClose');
+const statsRange = document.getElementById('statsRange');
+const statCards = document.getElementById('statCards');
+const chartAxis = document.getElementById('chartAxis');
+const slowestList = document.getElementById('slowestList');
+const topRepoList = document.getElementById('topRepoList');
 
 let scrollInfo = { registry: FALLBACK_REGISTRY, defaultOrg: FALLBACK_ORG };
 let pollTimer = null;
@@ -957,6 +968,207 @@ function renderHistory() {
   updateHistoryHint(query ? 0 : all.length);
 }
 
+/* ---------------- 统计（D1 聚合） ---------------- */
+
+let statsDays = 30;
+let statsData = null;
+
+/** 把按天序列画成折线；高度按数据自适应 */
+function drawSpark(svg, series, { width, height, pad = 3 } = {}) {
+  if (!svg) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = '';
+  const points = (series || []).filter((p) => p && Number.isFinite(p.runs));
+  if (points.length < 1) {
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', String(width / 2));
+    t.setAttribute('y', String(height / 2 + 3));
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-size', '9');
+    t.setAttribute('fill', 'currentColor');
+    t.setAttribute('opacity', '0.5');
+    t.textContent = '暂无数据';
+    svg.appendChild(t);
+    return;
+  }
+
+  const max = Math.max(1, ...points.map((p) => p.runs));
+  const spanX = Math.max(1, points.length - 1);
+  const coords = points.map((p, i) => {
+    const x = points.length === 1 ? width / 2 : (i / spanX) * width;
+    const y = height - pad - (p.runs / max) * (height - pad * 2);
+    return [x, y];
+  });
+
+  // 面积
+  const area = document.createElementNS(NS, 'path');
+  area.setAttribute('d', `M${coords[0][0]},${height} ` +
+    coords.map(([x, y]) => `L${x},${y}`).join(' ') +
+    ` L${coords[coords.length - 1][0]},${height} Z`);
+  area.setAttribute('fill', 'currentColor');
+  area.setAttribute('opacity', '0.12');
+  svg.appendChild(area);
+
+  // 折线
+  const line = document.createElementNS(NS, 'path');
+  line.setAttribute('d', coords.map(([x, y], i) => `${i ? 'L' : 'M'}${x},${y}`).join(' '));
+  line.setAttribute('fill', 'none');
+  line.setAttribute('stroke', 'currentColor');
+  line.setAttribute('stroke-width', points.length === 1 ? '2' : '1.6');
+  line.setAttribute('stroke-linejoin', 'round');
+  line.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(line);
+
+  // 单点时画个圆
+  if (points.length === 1) {
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', String(coords[0][0]));
+    c.setAttribute('cy', String(coords[0][1]));
+    c.setAttribute('r', '2.5');
+    c.setAttribute('fill', 'currentColor');
+    svg.appendChild(c);
+  }
+}
+
+function fmtShortDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+  const total = Math.round(seconds);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return s ? `${m}m${String(s).padStart(2, '0')}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h${String(m % 60).padStart(2, '0')}m`;
+}
+
+function renderStatsStrip() {
+  if (!statsStrip) return;
+  if (!statsData || !statsData.totals || !statsData.totals.runs) {
+    statsStrip.hidden = true;
+    return;
+  }
+  const t = statsData.totals;
+  statsStrip.hidden = false;
+  statsLine.innerHTML = `近 ${statsData.days} 天 · <b>${t.runs}</b> 次 · 成功 <b>${t.successRate}%</b> · 均 <b>${fmtShortDuration(t.avgDuration)}</b>`;
+  spark.style.color = 'var(--accent-text)';
+  drawSpark(spark, statsData.series, { width: 240, height: 28 });
+}
+
+function renderStatsPanel() {
+  if (!statsData) return;
+  const t = statsData.totals || {};
+
+  if (statCards) {
+    statCards.innerHTML = '';
+    const cards = [
+      { k: '同步次数', v: String(t.runs || 0), u: '次' },
+      { k: '成功率', v: String(t.successRate || 0), u: '%' },
+      { k: '平均耗时', v: fmtShortDuration(t.avgDuration), u: '' },
+      { k: '累计耗时', v: fmtShortDuration(t.totalDuration), u: '' },
+    ];
+    cards.forEach(({ k, v, u }) => {
+      const div = document.createElement('div');
+      div.className = 'stat-card';
+      const kEl = document.createElement('div');
+      kEl.className = 'k';
+      kEl.textContent = k;
+      const vEl = document.createElement('div');
+      vEl.className = 'v';
+      vEl.textContent = v;
+      if (u) {
+        const uEl = document.createElement('span');
+        uEl.className = 'u';
+        uEl.textContent = u;
+        vEl.appendChild(uEl);
+      }
+      div.append(kEl, vEl);
+      statCards.appendChild(div);
+    });
+  }
+
+  if (sparkLg) {
+    sparkLg.style.color = 'var(--accent-text)';
+    drawSpark(sparkLg, statsData.series, { width: 600, height: 90, pad: 6 });
+  }
+
+  if (chartAxis) {
+    const s = statsData.series || [];
+    chartAxis.innerHTML = '';
+    const left = document.createElement('span');
+    left.textContent = s.length ? s[0].day.slice(5) : '';
+    const right = document.createElement('span');
+    right.textContent = s.length ? s[s.length - 1].day.slice(5) : '';
+    chartAxis.append(left, right);
+  }
+
+  const fillList = (ul, items, render) => {
+    if (!ul) return;
+    ul.innerHTML = '';
+    if (!items || !items.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = '暂无数据';
+      ul.appendChild(li);
+      return;
+    }
+    items.forEach((item) => ul.appendChild(render(item)));
+  };
+
+  fillList(slowestList, statsData.slowest, (r) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = r.source;
+    name.title = `${r.source} → ${r.destination}`;
+    const num = document.createElement('span');
+    num.className = 'num';
+    num.textContent = fmtShortDuration(r.durationSeconds);
+    li.append(name, num);
+    return li;
+  });
+
+  fillList(topRepoList, statsData.topRepos, (r) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = r.repo || '—';
+    const num = document.createElement('span');
+    num.className = 'num';
+    num.textContent = `${r.runs} 次`;
+    li.append(name, num);
+    return li;
+  });
+}
+
+async function loadStats({ days = statsDays, renderPanel = false } = {}) {
+  if (!statsStrip) return;
+  try {
+    const resp = await apiFetch(`/api/stats?days=${days}`);
+    if (resp.status === 401) { handleUnauthorized('登录已过期，请重新登录'); return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'bad response');
+    statsDays = data.days;
+    statsData = data;
+    renderStatsStrip();
+    if (renderPanel) renderStatsPanel();
+  } catch (err) {
+    if (statsStrip) statsStrip.hidden = true;
+    if (renderPanel) showResult('error', `统计加载失败：${err.message}`);
+  }
+}
+
+function openStats() {
+  if (!statsBackdrop) return;
+  statsBackdrop.hidden = false;
+  if (statsData) renderStatsPanel();
+  loadStats({ renderPanel: true });
+}
+
+function closeStats() {
+  if (statsBackdrop) statsBackdrop.hidden = true;
+}
+
 /* ---------------- 搜索（D1 索引） ---------------- */
 
 async function runSearch(q) {
@@ -1131,6 +1343,7 @@ async function refreshHistory() {
     historyLoading = false;
   }
   renderHistory();
+  loadStats();
 }
 
 /* ---------------- 配置 / 进度 ---------------- */
@@ -1314,6 +1527,33 @@ if (archChips) {
   });
 }
 
+/* ---------------- 统计面板交互 ---------------- */
+
+if (statsStrip) {
+  statsStrip.addEventListener('click', openStats);
+}
+
+if (statsClose) {
+  statsClose.addEventListener('click', closeStats);
+}
+
+if (statsBackdrop) {
+  statsBackdrop.addEventListener('click', (e) => {
+    if (e.target === statsBackdrop) closeStats();
+  });
+}
+
+if (statsRange) {
+  statsRange.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-days]');
+    if (!btn) return;
+    const days = Number(btn.dataset.days);
+    if (![7, 30, 90].includes(days)) return;
+    statsRange.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+    loadStats({ days, renderPanel: true });
+  });
+}
+
 /* ---------------- 复制镜像地址 ---------------- */
 
 let copyResetTimer = null;
@@ -1438,7 +1678,12 @@ if (drawerBackdrop) drawerBackdrop.addEventListener('click', closeDrawer);
 if (progressBarBtn) progressBarBtn.addEventListener('click', openDrawer);
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && drawerIsOpen()) closeDrawer();
+  if (event.key !== 'Escape') return;
+  if (statsBackdrop && !statsBackdrop.hidden) {
+    closeStats();
+    return;
+  }
+  if (drawerIsOpen()) closeDrawer();
 });
 
 if (historySearch) {
