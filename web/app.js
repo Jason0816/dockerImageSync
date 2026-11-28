@@ -50,6 +50,11 @@ const isPublicInput = document.getElementById('isPublic');
 const submitBtn = document.getElementById('submitBtn');
 const resultDiv = document.getElementById('result');
 const previewTarget = document.getElementById('previewTarget');
+const syncedNote = document.getElementById('syncedNote');
+const syncedTime = document.getElementById('syncedTime');
+const syncedBody = document.getElementById('syncedBody');
+const syncedCopy = document.getElementById('syncedCopy');
+const syncedDismiss = document.getElementById('syncedDismiss');
 const copyBtn = document.getElementById('copyBtn');
 const progressDiv = document.getElementById('progressDrawer');
 const drawerBackdrop = document.getElementById('drawerBackdrop');
@@ -460,11 +465,102 @@ function renderPreview() {
 
   if (!parsed) {
     previewTarget.textContent = '填写源镜像地址后自动生成';
+    hideSyncedNote();
     return;
   }
   const org = (orgInput.value || '').trim() || scrollInfo.defaultOrg;
   const tag = parsed.tag || DEFAULT_TAG;
   previewTarget.textContent = `${scrollInfo.registry}/${org}/${parsed.repo}:${tag}`;
+  scheduleSyncedCheck(arch);
+}
+
+/* ---------------- 已同步过提示 ---------------- */
+
+// 已确认同步过的组合（dest|arch），避免重复请求；被用户手动忽略的也记在这里
+const syncedChecked = new Map();
+let syncedTimer = null;
+let syncedDismissedKey = '';
+
+function hideSyncedNote() {
+  if (syncedNote) syncedNote.hidden = true;
+}
+
+function syncedKey(destination, arch) {
+  return `${destination}|${arch}`;
+}
+
+function scheduleSyncedCheck(arch) {
+  if (!syncedNote || !arch) {
+    hideSyncedNote();
+    return;
+  }
+  if (syncedTimer) clearTimeout(syncedTimer);
+  syncedTimer = setTimeout(() => checkSynced(arch), 400);
+}
+
+async function checkSynced(arch) {
+  const destination = (previewTarget.textContent || '').trim();
+  if (!destination || destination.startsWith('填写')) {
+    hideSyncedNote();
+    return;
+  }
+
+  const key = syncedKey(destination, arch);
+  if (key === syncedDismissedKey) {
+    hideSyncedNote();
+    return;
+  }
+
+  if (syncedChecked.has(key)) {
+    renderSyncedNote(syncedChecked.get(key), destination);
+    return;
+  }
+
+  try {
+    const resp = await apiFetch(
+      `/api/synced?destination=${encodeURIComponent(destination)}&arch=${encodeURIComponent(arch)}`
+    );
+    if (resp.status === 401) return;
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) return;
+
+    // 只缓存"有数据"的结果；未同步过的不缓存，避免刚同步完还提示否
+    if (data.synced && data.run) {
+      syncedChecked.set(key, data.run);
+      renderSyncedNote(data.run, destination);
+    } else {
+      hideSyncedNote();
+    }
+  } catch { /* 静默失败，不打扰用户 */ }
+}
+
+function fmtSyncedAt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderSyncedNote(run, destination) {
+  if (!syncedNote) return;
+  if (syncedTime) {
+    const when = fmtSyncedAt(run.createdAt);
+    const dur = fmtDuration(run.durationSeconds, 'completed');
+    syncedTime.textContent = [when, dur && `耗时 ${dur}`].filter(Boolean).join(' · ');
+  }
+  if (syncedBody) {
+    syncedBody.textContent = '';
+    const line = document.createElement('span');
+    line.textContent = '无需重复同步，可直接复制下面的地址使用：';
+    const code = document.createElement('code');
+    code.textContent = destination;
+    const wrap = document.createElement('div');
+    wrap.style.marginTop = '0.15rem';
+    wrap.appendChild(code);
+    syncedBody.append(line, wrap);
+  }
+  syncedNote.hidden = false;
 }
 
 const STEP_ICONS = {
@@ -1524,6 +1620,28 @@ if (archChips) {
   archChips.addEventListener('change', () => {
     clearArchError();
     renderPreview();
+  });
+}
+
+/* ---------------- 已同步提示交互 ---------------- */
+
+if (syncedCopy) {
+  syncedCopy.addEventListener('click', async () => {
+    const destination = (previewTarget.textContent || '').trim();
+    if (!destination || destination.startsWith('填写')) return;
+    const ok = await writeClipboard(destination);
+    if (!ok) return;
+    syncedCopy.textContent = '已复制 ✓';
+    setTimeout(() => { syncedCopy.textContent = '复制目标地址'; }, 1500);
+  });
+}
+
+if (syncedDismiss) {
+  syncedDismiss.addEventListener('click', () => {
+    const arch = selectedArch();
+    const destination = (previewTarget.textContent || '').trim();
+    syncedDismissedKey = destination && arch ? syncedKey(destination, arch) : '';
+    hideSyncedNote();
   });
 }
 

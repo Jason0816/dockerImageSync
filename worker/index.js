@@ -258,6 +258,65 @@ async function recordSyncFinish(env, runId, conclusion, durationSeconds, finishe
   }
 }
 
+/**
+ * 查询某个目标地址 + 架构是否已经成功同步过（用于前端提示"可跳过本次同步"）。
+ * arch=all 会覆盖 amd64 / arm64，所以查单架构时也要把 all 算命中。
+ */
+async function handleSyncedCheck(env, url) {
+  if (!env.DB) {
+    return jsonResponse(env, { ok: true, synced: false, reason: 'no-d1' });
+  }
+
+  const destination = (url.searchParams.get('destination') || '').trim();
+  const arch = (url.searchParams.get('arch') || '').trim().toLowerCase();
+  if (!destination) {
+    return jsonResponse(env, { error: 'destination 不能为空' }, 400);
+  }
+
+  // arch 在库里有两种写法：触发时存原始值（amd64/arm64/all），回填时存 run 标题里的
+// amd64+arm64。查单架构时把「覆盖了该架构的组合」也算命中。
+let archs;
+if (arch === 'amd64') archs = ['amd64', 'all', 'amd64+arm64'];
+  else if (arch === 'arm64') archs = ['arm64', 'all', 'amd64+arm64'];
+  else if (arch === 'all' || arch === 'amd64+arm64') archs = ['all', 'amd64+arm64'];
+  else archs = [arch || 'amd64'];
+
+  try {
+    const placeholders = archs.map((_, i) => `?${i + 2}`).join(', ');
+    const row = await env.DB.prepare(
+      `SELECT run_id, source, destination, arch, conclusion, duration_seconds,
+              created_at, finished_at
+         FROM syncs
+        WHERE destination = ?1
+          AND arch IN (${placeholders})
+          AND conclusion = 'success'
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1`
+    ).bind(destination, ...archs).first();
+
+    if (!row) {
+      return jsonResponse(env, { ok: true, synced: false });
+    }
+    return jsonResponse(env, {
+      ok: true,
+      synced: true,
+      run: {
+        id: row.run_id,
+        source: row.source,
+        destination: row.destination,
+        arch: row.arch,
+        durationSeconds: row.duration_seconds,
+        createdAt: row.created_at,
+        html_url: `https://github.com/${env.GITHUB_REPO}/actions/runs/${row.run_id}`,
+      },
+    });
+  } catch (err) {
+    console.error('synced check failed:', err && err.message);
+    return jsonResponse(env, { ok: true, synced: false, reason: 'query-failed' });
+  }
+}
+
 /** 同步统计：近 N 天的次数 / 成功率 / 耗时，以及按天序列供前端画趋势 */
 async function handleStats(env, url) {
   if (!env.DB) {
@@ -825,6 +884,15 @@ export default {
         role: await currentRole(request, env),
         adminEnabled: Boolean(env.ADMIN_PASSWORD),
       });
+    }
+
+    if (url.pathname === '/api/synced') {
+      if (request.method !== 'GET') {
+        return jsonResponse(env, { error: 'Method not allowed. Use GET /api/synced?destination=' }, 405);
+      }
+      const authError = await requireAuth(request, env);
+      if (authError) return authError;
+      return handleSyncedCheck(env, url);
     }
 
     if (url.pathname === '/api/stats') {
